@@ -29,9 +29,11 @@ import { setupInstall } from '../web/install.js';
 import { createCameraView } from './camera-view.js';
 import { enableDragReorder } from './drag.js';
 import { createPerspectiveEditor } from './perspective-editor.js';
+import { createStepHistory } from './navigation.js';
 import { APP_VERSION } from './version.js';
 
 const THUMB_SIZE = 360;
+const UNDO_DURATION = 6000; // 「元に戻す」を押せる時間
 const SAVE_DELAY = 300;
 
 const $ = (selector) => document.querySelector(selector);
@@ -42,7 +44,16 @@ const els = {
   grid: $('#page-grid'),
   count: $('#page-count'),
   nextBar: $('#next-bar'),
+  nextButton: $('#next-bar .btn'),
+  nextLabel: $('#next-label'),
   nextCount: $('#next-count'),
+  emptyTitleEasy: $('#empty-title-easy'),
+  emptyLeadEasy: $('#empty-lead-easy'),
+  captureMore: $('#capture-more'),
+  captureCount: $('#capture-count'),
+  captureRestart: $('#capture-restart'),
+  toastText: $('#toast-text'),
+  toastAction: $('#toast-action'),
   exportBar: $('#export-bar'),
   saveSummary: $('#save-summary'),
   fileName: $('#file-name'),
@@ -73,12 +84,14 @@ const store = await createSourceStore();
 const thumbnails = new Map(); // `${sourceId}:${pageIndex}` → Promise<string>（表示用URL）
 let doc = createDocument();
 let mode = currentMode();
-let easyStep = 'confirm'; // ページがあるときの、かんたんモードの段階（'confirm' | 'save'）
+let easyStep = 'confirm'; // ページがあるときの、かんたんモードの段階（'capture' | 'confirm' | 'save'）
 let lastExport = null; // { blob, fileName }
 
 // ---- 状態の更新 ----
 
 function update(next) {
+  // 「最初からやり直す」のあとに作業を始めたら、もう元に戻せないので片付ける
+  finalizeRestart();
   const { doc: pruned, removedSourceIds } = pruneSources(next);
   for (const sourceId of removedSourceIds) forgetSource(sourceId);
   doc = pruned;
@@ -156,7 +169,7 @@ async function restoreState() {
   els.fileName.value = state.fileName ?? '';
   if (PAPER_MODES.includes(state.paper)) els.paper.value = state.paper;
   if (QUALITY_PRESETS[state.quality]) els.quality.value = state.quality;
-  easyStep = state.step === 'save' ? 'save' : 'confirm';
+  easyStep = ['capture', 'confirm', 'save'].includes(state.step) ? state.step : 'confirm';
 }
 
 let persistRequested = false;
@@ -190,8 +203,8 @@ function addFiles(fileList) {
       }
     } finally {
       hideBusy();
-      easyStep = 'confirm';
       update(next);
+      setStep('confirm');
     }
     if (errors.length > 0) toast(errors.join('\n'), 'error');
   });
@@ -234,14 +247,21 @@ async function addSourceWithBlob(current, source, blob) {
 // ---- カメラ ----
 
 const camera = createCameraView({
+  // 撮った写真をページに加え、そのページのIDを返す（「最後の1枚を取り消す」で使う）
   onCapture: (frame, number) =>
     serial(async () => {
       const name = `撮影_${new Date().toISOString().slice(0, 10).replaceAll('-', '')}_${String(number).padStart(2, '0')}.jpg`;
+      const next = await addImage(doc, frame, name);
       easyStep = 'confirm';
-      update(await addImage(doc, frame, name));
+      update(next);
+      return next.pages[next.pages.length - 1].id;
+    }),
+  onUndo: (pageId) =>
+    serial(async () => {
+      if (doc.pages.some((p) => p.id === pageId)) update(removePages(doc, [pageId]));
     }),
   onDone: () => {
-    render();
+    setStep(doc.pages.length > 0 ? 'confirm' : 'capture');
     saveStateNow();
   },
   onUseOsCamera: () => els.inputCamera.click(),
@@ -339,20 +359,63 @@ function downloadResult() {
   showDone('保存しました', `「${lastExport.fileName}」をダウンロードしました`);
 }
 
-async function startOver() {
-  els.resultDialog.close();
+// ---- 最初からやり直す（数秒間は元に戻せる） ----
+
+let undoState = null; // { doc, fileName, step, timer }
+
+function restart(message = 'すべて削除しました') {
+  finalizeRestart();
+  if (els.resultDialog.open) els.resultDialog.close();
+  if (doc.pages.length === 0) {
+    setStep('capture');
+    return;
+  }
+  // 端末に保存した写真は、元に戻せる時間が過ぎてから消す
+  undoState = { doc, fileName: els.fileName.value, step: easyStep, timer: setTimeout(finalizeRestart, UNDO_DURATION) };
+  doc = createDocument();
   els.fileName.value = '';
-  easyStep = 'confirm';
-  update(createDocument());
-  await store.clear();
+  setStep('capture');
+  saveStateNow();
+  toast(message, 'info', { action: { label: '元に戻す', run: undoRestart }, duration: UNDO_DURATION });
+}
+
+function undoRestart() {
+  if (!undoState) return;
+  clearTimeout(undoState.timer);
+  const { doc: previous, fileName, step } = undoState;
+  undoState = null;
+  doc = previous;
+  els.fileName.value = fileName;
+  setStep(step);
+  saveStateNow();
+  toast('元に戻しました');
+}
+
+function finalizeRestart() {
+  if (!undoState) return;
+  clearTimeout(undoState.timer);
+  const previous = undoState.doc;
+  undoState = null;
+  for (const sourceId of Object.keys(previous.sources)) {
+    if (!doc.sources[sourceId]) forgetSource(sourceId);
+  }
 }
 
 // ---- 描画 ----
 
-/** 今のかんたんモードの段階 */
+/** 今のかんたんモードの段階（ページが0枚なら、いつも①） */
 function currentStep() {
   if (doc.pages.length === 0) return 'capture';
   return easyStep;
+}
+
+/** 段階を移る（スマホの「戻る」で戻れるよう、履歴にも積む） */
+function setStep(step, { record = true } = {}) {
+  const before = currentStep();
+  easyStep = step;
+  render();
+  if (record && mode === 'easy') stepHistory.push(currentStep());
+  if (currentStep() !== before) scrollTo({ top: 0 });
 }
 
 function render() {
@@ -361,18 +424,29 @@ function render() {
   const step = currentStep();
   document.body.dataset.step = step;
 
-  els.empty.hidden = count > 0;
-  els.workspace.hidden = count === 0 || (easy && step === 'save');
-  els.nextBar.hidden = !(easy && step === 'confirm');
+  els.empty.hidden = easy ? step !== 'capture' : count > 0;
+  els.workspace.hidden = count === 0 || (easy && step !== 'confirm');
+  els.nextBar.hidden = !(easy && count > 0 && step !== 'save');
   els.exportBar.hidden = count === 0 || (easy && step !== 'save');
   els.count.textContent = `${count}ページ`;
   els.nextCount.textContent = `（${count}ページ）`;
+  // ①の下のボタンは「確認へ進む」、②の下は「保存へ進む」
+  els.nextLabel.textContent = step === 'capture' ? '確認へ進む' : '保存へ進む';
+  els.nextButton.dataset.action = step === 'capture' ? 'go-confirm' : 'go-save';
+  // ①に戻ってきたとき（ページがあるとき）は、追加で撮れることと、やり直せることを伝える
+  els.emptyTitleEasy.textContent = count > 0 ? '写真を追加する' : '写真をPDFに';
+  els.emptyLeadEasy.hidden = count > 0;
+  els.captureMore.hidden = count === 0;
+  els.captureRestart.hidden = count === 0;
+  els.captureCount.textContent = String(count);
   els.saveSummary.textContent = `${count}ページをPDFにします`;
   if (!els.fileName.value) els.fileName.placeholder = suggestedFileName();
 
   for (const item of els.steps.querySelectorAll('[data-step]')) {
     if (item.dataset.step === step) item.setAttribute('aria-current', 'step');
     else item.removeAttribute('aria-current');
+    // ページがないときは、②③には進めない
+    item.disabled = count === 0 && item.dataset.step !== 'capture';
   }
 
   const cards = doc.pages.map((page, index) => renderCard(page, index, count));
@@ -512,12 +586,28 @@ const ICONS = {
 // ---- お知らせ・処理中の表示 ----
 
 let toastTimer = 0;
-function toast(message, kind = 'info') {
-  els.toast.textContent = message;
+let toastActionRun = null;
+/**
+ * 画面の下にお知らせを出す。
+ * @param {string} message
+ * @param {'info'|'error'} [kind]
+ * @param {{ action?: { label: string, run: () => void }, duration?: number }} [options] ボタン付きにするとき
+ */
+function toast(message, kind = 'info', { action, duration } = {}) {
+  els.toastText.textContent = message;
+  toastActionRun = action?.run ?? null;
+  els.toastAction.hidden = !action;
+  if (action) els.toastAction.textContent = action.label;
   els.toast.classList.toggle('error', kind === 'error');
+  els.toast.classList.toggle('has-action', Boolean(action));
   els.toast.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => els.toast.classList.remove('show'), kind === 'error' ? 6000 : 2500);
+  toastTimer = setTimeout(hideToast, duration ?? (kind === 'error' ? 6000 : 2500));
+}
+
+function hideToast() {
+  els.toast.classList.remove('show', 'has-action');
+  toastActionRun = null;
 }
 
 function showBusy(text) {
@@ -548,11 +638,37 @@ function applyMode(next) {
 }
 
 function goToStep(step) {
-  easyStep = step;
-  render();
+  setStep(step);
   saveStateSoon();
-  scrollTo({ top: 0 });
 }
+
+/** スマホの「戻る」で閉じられる画面（カメラ・補正画面・ダイアログ）が開いていれば閉じる */
+function closeOverlay() {
+  if (editor.isOpen()) {
+    editor.close();
+    return true;
+  }
+  if (camera.isOpen()) {
+    camera.finish();
+    return true;
+  }
+  for (const dialog of [els.resultDialog, els.installDialog]) {
+    if (dialog.open) {
+      dialog.close();
+      return true;
+    }
+  }
+  return false;
+}
+
+const stepHistory = createStepHistory({
+  getStep: currentStep,
+  onNavigate: (step) => {
+    setStep(step, { record: false });
+    saveStateSoon();
+  },
+  closeOverlay,
+});
 
 // ---- 操作の受け付け ----
 
@@ -571,7 +687,11 @@ function onAction(action) {
       els.inputFiles.click();
       break;
     case 'clear':
-      if (confirm('すべてのページを削除しますか？')) startOver();
+    case 'restart':
+      restart();
+      break;
+    case 'go-confirm':
+      goToStep('confirm');
       break;
     case 'go-save':
       goToStep('save');
@@ -595,7 +715,7 @@ function onAction(action) {
       showResult();
       break;
     case 'new-document':
-      startOver();
+      restart('新しく作り始めます');
       break;
     case 'apply-update':
       applyUpdate();
@@ -637,6 +757,18 @@ function onPageOp(op, pageId) {
 }
 
 document.addEventListener('click', (event) => {
+  // 手順（①②③）のボタン。body にも data-step があるので、#steps の中だけを見る
+  const stepTarget = event.target.closest('#steps [data-step]');
+  if (stepTarget) {
+    if (!stepTarget.disabled) goToStep(stepTarget.dataset.step);
+    return;
+  }
+  if (event.target.closest('#toast-action')) {
+    const run = toastActionRun;
+    hideToast();
+    run?.();
+    return;
+  }
   const actionTarget = event.target.closest('[data-action]');
   if (actionTarget) {
     onAction(actionTarget.dataset.action);
@@ -770,6 +902,7 @@ window.addEventListener('resize', placeVersion);
 
 await restoreState();
 applyMode(mode);
+stepHistory.seed(currentStep());
 showInstallButtons(install.method);
 
 if (justUpdated()) toast(`最新版（v${APP_VERSION}）に更新しました`);

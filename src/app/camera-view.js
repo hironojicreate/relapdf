@@ -10,12 +10,14 @@ const BRIGHTNESS_KEY = 'relapdf:camera-brightness';
 
 /**
  * @param {object} options
- * @param {(frame: {blob: Blob, width: number, height: number}, number: number) => Promise<void>} options.onCapture
+ * @param {(frame: {blob: Blob, width: number, height: number}, number: number) => Promise<string>} options.onCapture
+ *   撮った写真を渡す。追加したページのIDを返す
+ * @param {(pageId: string) => Promise<void>} options.onUndo 「最後の1枚を取り消す」を押したとき
  * @param {() => void} options.onDone 「完了」で閉じたとき
  * @param {() => void} options.onUseOsCamera 「端末のカメラで撮る」を押したとき
  * @param {(text: string) => void} options.onBusy 処理待ちの表示
  */
-export function createCameraView({ onCapture, onDone, onUseOsCamera, onBusy }) {
+export function createCameraView({ onCapture, onUndo, onDone, onUseOsCamera, onBusy }) {
   const $ = (selector) => document.querySelector(selector);
   const root = $('#camera');
   const video = $('#camera-video');
@@ -29,10 +31,10 @@ export function createCameraView({ onCapture, onDone, onUseOsCamera, onBusy }) {
   const brightnessLabel = $('#camera-brightness-value');
 
   let stream = null;
-  let shots = 0;
+  let shots = []; // この撮影で撮った写真 { url, pageId: Promise<string> }
   let pending = Promise.resolve();
-  let lastUrl = null;
   let capturing = false;
+  let messageTimer = 0;
   let brightness = 1; // 明るさの倍率（撮った写真にも同じ倍率をかける）
 
   // 明るさ：前回の設定を覚えておく
@@ -60,10 +62,21 @@ export function createCameraView({ onCapture, onDone, onUseOsCamera, onBusy }) {
   }
 
   function setCount() {
-    count.textContent = `${shots}枚`;
-    last.hidden = shots === 0;
+    clearTimeout(messageTimer);
+    count.textContent = `${shots.length}枚`;
+    const latest = shots[shots.length - 1];
+    last.hidden = !latest;
+    if (latest) last.src = latest.url;
+    else last.removeAttribute('src');
     // まだ1枚も撮っていないときは、撮らずに戻れることがわかるようにする
-    doneButton.textContent = shots === 0 ? '閉じる' : '完了';
+    doneButton.textContent = shots.length === 0 ? '閉じる' : '完了';
+  }
+
+  /** 枚数の表示の場所に、少しの間だけお知らせを出す */
+  function flashMessage(text) {
+    count.textContent = text;
+    clearTimeout(messageTimer);
+    messageTimer = setTimeout(setCount, 1500);
   }
 
   async function start() {
@@ -91,7 +104,7 @@ export function createCameraView({ onCapture, onDone, onUseOsCamera, onBusy }) {
   }
 
   function open() {
-    shots = 0;
+    shots = [];
     pending = Promise.resolve();
     setCount();
     root.hidden = false;
@@ -103,8 +116,8 @@ export function createCameraView({ onCapture, onDone, onUseOsCamera, onBusy }) {
     stop();
     root.hidden = true;
     document.body.classList.remove('camera-open');
-    if (lastUrl) URL.revokeObjectURL(lastUrl);
-    lastUrl = null;
+    for (const shot of shots) URL.revokeObjectURL(shot.url);
+    shots = [];
     last.removeAttribute('src');
   }
 
@@ -117,18 +130,28 @@ export function createCameraView({ onCapture, onDone, onUseOsCamera, onBusy }) {
     navigator.vibrate?.(15);
     try {
       const frame = await captureFrame(video, { brightness });
-      shots += 1;
-      if (lastUrl) URL.revokeObjectURL(lastUrl);
-      lastUrl = URL.createObjectURL(frame.blob);
-      last.src = lastUrl;
+      const number = shots.length + 1;
+      pending = pending.then(() => onCapture(frame, number)).catch((error) => {
+        console.error(error);
+        return null;
+      });
+      shots.push({ url: URL.createObjectURL(frame.blob), pageId: pending });
       setCount();
-      const number = shots;
-      pending = pending.then(() => onCapture(frame, number)).catch((error) => console.error(error));
     } catch (error) {
       console.error(error);
     } finally {
       capturing = false;
     }
+  }
+
+  /** 最後に撮った1枚を取り消す */
+  function undoLast() {
+    const shot = shots.pop();
+    if (!shot) return;
+    URL.revokeObjectURL(shot.url);
+    setCount();
+    flashMessage('1枚取り消しました');
+    pending = pending.then(() => shot.pageId).then((id) => (id ? onUndo(id) : null)).catch((e) => console.error(e));
   }
 
   async function done() {
@@ -154,11 +177,12 @@ export function createCameraView({ onCapture, onDone, onUseOsCamera, onBusy }) {
     if (action === 'shoot') shoot();
     else if (action === 'done') done();
     else if (action === 'brightness-reset') setBrightness(0);
+    else if (action === 'undo') undoLast();
     else if (action === 'os-camera') {
       close();
       onUseOsCamera();
     }
   });
 
-  return { open, close, isOpen };
+  return { open, close, isOpen, finish: done };
 }

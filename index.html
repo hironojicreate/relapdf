@@ -183,14 +183,20 @@ body.mode-easy .page-grid { grid-template-columns: repeat(auto-fill, minmax(140p
   display: flex; justify-content: center; gap: 4px; list-style: none; margin: 0; padding: 10px 16px 0;
   font-size: 13px; color: var(--text-muted);
 }
-.steps li { display: flex; align-items: center; gap: 6px; padding: 4px 10px 4px 4px; border-radius: 999px; }
-.steps li + li::before { content: ""; width: 14px; height: 1px; background: var(--border); margin-right: 6px; }
+.steps li { display: flex; align-items: center; }
+.steps li + li::before { content: ""; width: 12px; height: 1px; background: var(--border); margin: 0 4px; }
+.steps button {
+  display: flex; align-items: center; gap: 6px; min-height: 44px; padding: 4px 12px 4px 6px;
+  border: 1px solid transparent; border-radius: 999px; background: transparent; color: inherit; font-size: 13px; cursor: pointer;
+}
+.steps button:hover:not(:disabled) { background: var(--surface-2); }
+.steps button:disabled { opacity: .45; cursor: default; }
 .steps .num {
   width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
   background: var(--surface-2); font-weight: 700; font-size: 12px;
 }
-.steps li[aria-current="step"] { color: var(--text); font-weight: 700; }
-.steps li[aria-current="step"] .num { background: var(--accent); color: var(--accent-text); }
+.steps [aria-current="step"] { color: var(--text); font-weight: 700; background: var(--surface); border-color: var(--border); }
+.steps [aria-current="step"] .num { background: var(--accent); color: var(--accent-text); }
 
 /* ---- ドラッグでの並べ替え ---- */
 .grip { touch-action: none; cursor: grab; }
@@ -288,6 +294,15 @@ dialog .actions { display: flex; flex-direction: column; gap: 10px; }
   opacity: 0; pointer-events: none; transition: opacity .2s;
 }
 .toast.show { opacity: 1; }
+.toast.has-action { pointer-events: auto; display: flex; align-items: center; gap: 14px; white-space: nowrap; }
+.toast-action {
+  border: 0; background: transparent; color: var(--accent-soft); font-weight: 700; font-size: 14px;
+  padding: 6px 4px; min-height: 36px; cursor: pointer; text-decoration: underline; text-underline-offset: 3px;
+}
+.capture-more { margin: -8px 0 20px; padding: 10px 14px; border-radius: 12px; background: var(--accent-soft); font-size: 14px; }
+.capture-more p { margin: 0; }
+.btn.restart-link { margin-top: 8px; font-size: 14px; color: var(--danger); font-weight: 500; }
+.export-bar .btn.restart-link { flex: 1 1 100%; margin: 0; }
 /* 下のバーが出ているときは、ボタンに重ならないようバーの上に出す */
 body.has-bottom-bar .toast { bottom: calc(var(--bottom-bar, 0px) + 16px); }
 .toast.error { background: var(--danger); color: #fff; }
@@ -387,7 +402,13 @@ body.camera-open { overflow: hidden; }
   background: linear-gradient(to top, rgba(0, 0, 0, .6), transparent);
 }
 .camera-last-wrap { justify-self: start; width: 56px; height: 56px; }
+.camera-undo { position: relative; padding: 0; border: 0; background: transparent; cursor: pointer; display: block; }
 .camera-last { width: 56px; height: 56px; object-fit: cover; border-radius: 10px; border: 2px solid #fff; display: block; }
+.camera-undo-mark {
+  position: absolute; top: -8px; right: -8px; width: 24px; height: 24px; border-radius: 50%;
+  display: grid; place-items: center; background: #e5484d; color: #fff; font-size: 16px; font-weight: 700; line-height: 1;
+}
+.camera-last[hidden] + .camera-undo-mark { display: none; }
 .shutter {
   width: 76px; height: 76px; border-radius: 50%; cursor: pointer;
   border: 5px solid #fff; background: rgba(255, 255, 255, .9); box-shadow: inset 0 0 0 3px #000;
@@ -454,17 +475,20 @@ body.has-bottom-bar .app-version { bottom: calc(var(--bottom-bar, 0px) + 6px); }
   <button type="button" class="btn primary" data-action="apply-update">更新する</button>
 </div>
 
-<ol id="steps" class="steps easy-only" aria-label="手順">
-  <li data-step="capture"><span class="num">1</span>撮る・選ぶ</li>
-  <li data-step="confirm"><span class="num">2</span>確認</li>
-  <li data-step="save"><span class="num">3</span>保存</li>
+<ol id="steps" class="steps easy-only" aria-label="手順（押すとその段階に移ります）">
+  <li><button type="button" data-step="capture"><span class="num">1</span>撮る・選ぶ</button></li>
+  <li><button type="button" data-step="confirm"><span class="num">2</span>確認</button></li>
+  <li><button type="button" data-step="save"><span class="num">3</span>保存</button></li>
 </ol>
 
 <main>
   <section id="empty" class="empty">
-    <h2 class="easy-only">写真をPDFに</h2>
+    <h2 class="easy-only" id="empty-title-easy">写真をPDFに</h2>
     <h2 class="detail-only">PDFを作る・まとめる</h2>
-    <p class="lead easy-only">続けて何枚でも撮れます。順番を確認して保存します。</p>
+    <p class="lead easy-only" id="empty-lead-easy">続けて何枚でも撮れます。順番を確認して保存します。</p>
+    <div class="capture-more easy-only" id="capture-more" hidden>
+      <p>いま <b id="capture-count">0</b> ページあります。撮った写真は後ろに追加されます。</p>
+    </div>
     <p class="lead detail-only">PDFや画像をここにドロップするか、ファイルを選んでください。</p>
     <div class="empty-actions">
       <button type="button" class="btn primary big easy-only" data-action="camera">カメラで撮る</button>
@@ -472,6 +496,7 @@ body.has-bottom-bar .app-version { bottom: calc(var(--bottom-bar, 0px) + 6px); }
       <button type="button" class="btn primary big detail-only" data-action="pick-files">ファイルを選ぶ</button>
       <button type="button" class="btn subtle easy-only" data-action="os-camera">端末のカメラアプリで撮る</button>
     </div>
+    <button type="button" class="btn subtle restart-link easy-only" data-action="restart" id="capture-restart" hidden>最初からやり直す（すべて削除）</button>
     <p class="privacy">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
       ファイルは端末の外に出ません
@@ -495,7 +520,7 @@ body.has-bottom-bar .app-version { bottom: calc(var(--bottom-bar, 0px) + 6px); }
 </main>
 
 <footer id="next-bar" class="next-bar" hidden>
-  <button type="button" class="btn primary" data-action="go-save">保存へ進む<span id="next-count"></span></button>
+  <button type="button" class="btn primary" data-action="go-save"><span id="next-label">保存へ進む</span><span id="next-count"></span></button>
 </footer>
 
 <footer id="export-bar" class="export-bar" hidden>
@@ -521,6 +546,7 @@ body.has-bottom-bar .app-version { bottom: calc(var(--bottom-bar, 0px) + 6px); }
       </select>
     </label>
     <button type="button" class="btn primary" data-action="export">PDFを作成</button>
+    <button type="button" class="btn subtle restart-link easy-only" data-action="restart">最初からやり直す（すべて削除）</button>
   </div>
 </footer>
 
@@ -540,7 +566,12 @@ body.has-bottom-bar .app-version { bottom: calc(var(--bottom-bar, 0px) + 6px); }
     <button type="button" class="camera-brightness-value" id="camera-brightness-value" data-camera="brightness-reset" title="明るさを元に戻す">100%</button>
   </div>
   <div class="camera-bottom">
-    <div class="camera-last-wrap"><img id="camera-last" class="camera-last" alt="最後に撮った写真" hidden></div>
+    <div class="camera-last-wrap">
+      <button type="button" class="camera-undo" data-camera="undo" aria-label="最後の1枚を取り消す" title="最後の1枚を取り消す">
+        <img id="camera-last" class="camera-last" alt="" hidden>
+        <span class="camera-undo-mark" aria-hidden="true">×</span>
+      </button>
+    </div>
     <button type="button" id="camera-shutter" class="shutter" data-camera="shoot" aria-label="撮影" disabled></button>
     <button type="button" class="camera-done" data-camera="done">完了</button>
   </div>
@@ -611,7 +642,7 @@ body.has-bottom-bar .app-version { bottom: calc(var(--bottom-bar, 0px) + 6px); }
 </dialog>
 
 <div id="busy" class="busy" hidden role="alert" aria-busy="true"><div class="spinner"></div><p id="busy-text"></p></div>
-<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<div id="toast" class="toast" role="status" aria-live="polite"><span id="toast-text"></span><button type="button" id="toast-action" class="toast-action" hidden></button></div>
 <div id="app-version" class="app-version"></div>
 <div id="drop-overlay" class="drop-overlay" hidden>ここにドロップして追加</div>
 <noscript><p style="padding:16px">RelaPDFを使うには、JavaScriptを有効にしてください。</p></noscript>
