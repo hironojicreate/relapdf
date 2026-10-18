@@ -1,33 +1,45 @@
 // RelaPDF の画面（UI層）
 //
 // ページリスト（Core）の状態を持ち、操作のたびに新しい状態に置き換えて画面を描き直す。
+// かんたんモードは「1 撮る・選ぶ → 2 確認 → 3 保存」の3ステップで進む。
+// 作業中の状態は端末内に自動保存し、ページを読み込み直しても続きから再開する。
 
 import {
   addSource,
   appendSourcePages,
   createDocument,
+  deserializeDocument,
   movePages,
   pruneSources,
   removePages,
   rotatePages,
+  serializeDocument,
 } from '../core/page-list.js';
 import { exportPdf, inspectPdf } from '../core/pdf-export.js';
 import { defaultFileName, sanitizeFileName, stripExtension } from '../core/filename.js';
+import { PAPER_MODES, QUALITY_PRESETS } from '../core/layout.js';
 import { createSourceStore } from '../web/source-store.js';
 import { imageThumbnailUrl, loadImageFile, prepareImageForExport } from '../web/image.js';
 import { closePdf, pdfThumbnailUrl } from '../web/pdf-view.js';
 import { canShareFiles, downloadBlob, shareBlob } from '../web/save.js';
 import { currentMode, saveMode } from '../web/mode.js';
+import { createCameraView } from './camera-view.js';
+import { enableDragReorder } from './drag.js';
 
 const THUMB_SIZE = 360;
+const SAVE_DELAY = 300;
 
 const $ = (selector) => document.querySelector(selector);
 const els = {
+  steps: $('#steps'),
   empty: $('#empty'),
   workspace: $('#workspace'),
   grid: $('#page-grid'),
   count: $('#page-count'),
+  nextBar: $('#next-bar'),
+  nextCount: $('#next-count'),
   exportBar: $('#export-bar'),
+  saveSummary: $('#save-summary'),
   fileName: $('#file-name'),
   paper: $('#paper'),
   quality: $('#quality'),
@@ -48,9 +60,11 @@ const els = {
   dropOverlay: $('#drop-overlay'),
 };
 
-const store = createSourceStore();
+const store = await createSourceStore();
 const thumbnails = new Map(); // `${sourceId}:${pageIndex}` → Promise<string>（表示用URL）
 let doc = createDocument();
+let mode = currentMode();
+let easyStep = 'confirm'; // ページがあるときの、かんたんモードの段階（'confirm' | 'save'）
 let lastExport = null; // { blob, fileName }
 
 // ---- 状態の更新 ----
@@ -59,7 +73,9 @@ function update(next) {
   const { doc: pruned, removedSourceIds } = pruneSources(next);
   for (const sourceId of removedSourceIds) forgetSource(sourceId);
   doc = pruned;
+  if (doc.pages.length === 0) easyStep = 'confirm';
   render();
+  saveStateSoon();
 }
 
 function forgetSource(sourceId) {
@@ -73,68 +89,156 @@ function forgetSource(sourceId) {
   }
 }
 
+// ファイルの追加やカメラの写真など、時間のかかる変更は1つずつ順番に行う（追い越しで消えないように）
+let work = Promise.resolve();
+function serial(task) {
+  const result = work.then(task);
+  work = result.catch(() => {});
+  return result;
+}
+
+// ---- 自動保存 ----
+
+let saveTimer = 0;
+function saveStateSoon() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveStateNow, SAVE_DELAY);
+}
+
+function saveStateNow() {
+  clearTimeout(saveTimer);
+  const state = {
+    doc: serializeDocument(doc),
+    fileName: els.fileName.value,
+    paper: els.paper.value,
+    quality: els.quality.value,
+    step: easyStep,
+    savedAt: Date.now(),
+  };
+  return store.saveState(state).catch((error) => {
+    console.warn(error);
+    toast('端末の空き容量が足りないため、作業途中の保存ができませんでした', 'error');
+  });
+}
+
+/** 前回の作業が残っていれば、続きから再開する */
+async function restoreState() {
+  const state = await store.loadState().catch(() => null);
+  if (!state?.doc) return;
+  let restored;
+  try {
+    restored = deserializeDocument(state.doc);
+  } catch (error) {
+    console.warn('前回の作業を読み込めませんでした', error);
+    await store.clear();
+    return;
+  }
+  // 中身が見つからない元データのページは外す（保存の途中で閉じた場合など）
+  const keys = new Set(await store.keys());
+  const missing = restored.pages
+    .filter((p) => p.content.type !== 'blank' && !keys.has(p.content.sourceId))
+    .map((p) => p.id);
+  restored = pruneSources(removePages(restored, missing)).doc;
+  for (const key of keys) {
+    if (!restored.sources[key]) store.delete(key);
+  }
+
+  doc = restored;
+  els.fileName.value = state.fileName ?? '';
+  if (PAPER_MODES.includes(state.paper)) els.paper.value = state.paper;
+  if (QUALITY_PRESETS[state.quality]) els.quality.value = state.quality;
+  easyStep = state.step === 'save' ? 'save' : 'confirm';
+  if (doc.pages.length > 0) toast('前回の続きから再開しました');
+}
+
+let persistRequested = false;
+function requestPersistentStorage() {
+  // ブラウザが容量不足のときに、保存したデータを勝手に消さないようお願いする
+  if (persistRequested) return;
+  persistRequested = true;
+  navigator.storage?.persist?.().catch(() => {});
+}
+
 // ---- ファイルの読み込み ----
 
 const isPdf = (file) => file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
 const isImage = (file) => file.type.startsWith('image/') || /\.(jpe?g|png|gif|webp|heic|heif|bmp)$/i.test(file.name);
 
-async function addFiles(fileList) {
+function addFiles(fileList) {
   const files = [...fileList];
-  if (files.length === 0) return;
-  let next = doc;
-  const errors = [];
-  try {
-    for (const [i, file] of files.entries()) {
-      showBusy(files.length > 1 ? `読み込み中… ${i + 1} / ${files.length}` : '読み込み中…');
-      try {
-        next = await addFile(next, file);
-      } catch (error) {
-        console.error(error);
-        errors.push(`${file.name}：${error.message}`);
+  if (files.length === 0) return Promise.resolve();
+  return serial(async () => {
+    let next = doc;
+    const errors = [];
+    try {
+      for (const [i, file] of files.entries()) {
+        showBusy(files.length > 1 ? `読み込み中… ${i + 1} / ${files.length}` : '読み込み中…');
+        try {
+          next = await addFile(next, file);
+        } catch (error) {
+          console.error(error);
+          errors.push(`${file.name}：${error.message}`);
+        }
       }
+    } finally {
+      hideBusy();
+      easyStep = 'confirm';
+      update(next);
     }
-  } finally {
-    hideBusy();
-    update(next);
-  }
-  if (errors.length > 0) toast(errors.join('\n'), 'error');
+    if (errors.length > 0) toast(errors.join('\n'), 'error');
+  });
 }
 
 async function addFile(current, file) {
   if (isPdf(file)) {
     const bytes = new Uint8Array(await file.arrayBuffer());
     const { pageCount } = await inspectPdf(bytes);
-    const withSource = addSource(current, {
-      kind: 'pdf',
-      name: file.name,
-      mimeType: 'application/pdf',
-      byteLength: file.size,
-      pageCount,
-    });
-    const sourceId = newestSourceId(current, withSource);
-    store.put(sourceId, file);
-    return appendSourcePages(withSource, sourceId);
+    const source = { kind: 'pdf', name: file.name, mimeType: 'application/pdf', byteLength: file.size, pageCount };
+    return addSourceWithBlob(current, source, file);
   }
   if (isImage(file)) {
-    const image = await loadImageFile(file);
-    const withSource = addSource(current, {
-      kind: 'image',
-      name: file.name,
-      mimeType: image.blob.type,
-      byteLength: image.blob.size,
-      width: image.width,
-      height: image.height,
-    });
-    const sourceId = newestSourceId(current, withSource);
-    store.put(sourceId, image.blob);
-    return appendSourcePages(withSource, sourceId);
+    return addImage(current, await loadImageFile(file), file.name);
   }
   throw new Error('対応していないファイルです（PDFか画像を選んでください）');
 }
 
-function newestSourceId(before, after) {
-  return Object.keys(after.sources).find((id) => !before.sources[id]);
+function addImage(current, image, name) {
+  const source = {
+    kind: 'image',
+    name,
+    mimeType: image.blob.type,
+    byteLength: image.blob.size,
+    width: image.width,
+    height: image.height,
+  };
+  return addSourceWithBlob(current, source, image.blob);
 }
+
+async function addSourceWithBlob(current, source, blob) {
+  const withSource = addSource(current, source);
+  const sourceId = Object.keys(withSource.sources).find((id) => !current.sources[id]);
+  // 中身を先に保存してから、ページリストに入れる（途中で閉じても壊れないように）
+  await store.put(sourceId, blob).catch(() => {});
+  requestPersistentStorage();
+  return appendSourcePages(withSource, sourceId);
+}
+
+// ---- カメラ ----
+
+const camera = createCameraView({
+  onCapture: (frame, number) =>
+    serial(async () => {
+      const name = `撮影_${new Date().toISOString().slice(0, 10).replaceAll('-', '')}_${String(number).padStart(2, '0')}.jpg`;
+      easyStep = 'confirm';
+      update(await addImage(doc, frame, name));
+    }),
+  onDone: () => {
+    render();
+    saveStateNow();
+  },
+  onUseOsCamera: () => els.inputCamera.click(),
+  onBusy: (text) => (text ? showBusy(text) : hideBusy()),
+});
 
 // ---- 書き出し ----
 
@@ -155,7 +259,7 @@ async function createPdf() {
       getImage: async (page) => {
         imageDone += 1;
         showBusy(`PDFを作成中… ${imageDone} / ${imageTotal}`);
-        return prepareImageForExport(store.get(page.content.sourceId), { quality, paper });
+        return prepareImageForExport(await store.get(page.content.sourceId), { quality, paper });
       },
     });
     lastExport = { blob: new Blob([bytes], { type: 'application/pdf' }), fileName };
@@ -207,21 +311,41 @@ function downloadResult() {
   showDone('保存しました', `「${lastExport.fileName}」をダウンロードしました`);
 }
 
-function startOver() {
+async function startOver() {
   els.resultDialog.close();
   els.fileName.value = '';
+  easyStep = 'confirm';
   update(createDocument());
+  await store.clear();
 }
 
 // ---- 描画 ----
 
+/** 今のかんたんモードの段階 */
+function currentStep() {
+  if (doc.pages.length === 0) return 'capture';
+  return easyStep;
+}
+
 function render() {
   const count = doc.pages.length;
+  const easy = mode === 'easy';
+  const step = currentStep();
+  document.body.dataset.step = step;
+
   els.empty.hidden = count > 0;
-  els.workspace.hidden = count === 0;
-  els.exportBar.hidden = count === 0;
+  els.workspace.hidden = count === 0 || (easy && step === 'save');
+  els.nextBar.hidden = !(easy && step === 'confirm');
+  els.exportBar.hidden = count === 0 || (easy && step !== 'save');
   els.count.textContent = `${count}ページ`;
+  els.nextCount.textContent = `（${count}ページ）`;
+  els.saveSummary.textContent = `${count}ページをPDFにします`;
   if (!els.fileName.value) els.fileName.placeholder = suggestedFileName();
+
+  for (const item of els.steps.querySelectorAll('[data-step]')) {
+    if (item.dataset.step === step) item.setAttribute('aria-current', 'step');
+    else item.removeAttribute('aria-current');
+  }
 
   const cards = doc.pages.map((page, index) => renderCard(page, index, count));
   els.grid.replaceChildren(...cards);
@@ -254,6 +378,7 @@ function renderCard(page, index, count) {
   } else {
     const img = document.createElement('img');
     img.alt = `${index + 1}ページ目`;
+    img.draggable = false;
     img.style.transform = `rotate(${page.rotation}deg)`;
     img.hidden = true;
     const spinner = document.createElement('div');
@@ -279,10 +404,13 @@ function renderCard(page, index, count) {
 
   const actions = document.createElement('div');
   actions.className = 'page-actions';
+  const grip = iconButton('drag', 'ドラッグして並べ替え', ICONS.grip, false, 'grip easy-only');
+  grip.dataset.dragHandle = '';
   actions.append(
-    iconButton('move-left', '前へ移動', ICONS.left, index === 0),
+    grip,
+    iconButton('move-left', '前へ移動', ICONS.left, index === 0, 'detail-only'),
     iconButton('rotate', '右に回転', ICONS.rotate),
-    iconButton('move-right', '後ろへ移動', ICONS.right, index === count - 1),
+    iconButton('move-right', '後ろへ移動', ICONS.right, index === count - 1, 'detail-only'),
     iconButton('delete', '削除', ICONS.trash, false, 'danger'),
   );
 
@@ -307,11 +435,11 @@ let thumbnailQueue = Promise.resolve();
 function thumbnailFor(content) {
   const key = `${content.sourceId}:${content.pageIndex}`;
   if (!thumbnails.has(key)) {
-    const task = thumbnailQueue.then(() => {
+    const task = thumbnailQueue.then(async () => {
       if (!doc.sources[content.sourceId]) throw new Error('削除済みのページです');
       return content.type === 'pdf'
         ? pdfThumbnailUrl(content.sourceId, () => store.bytes(content.sourceId), content.pageIndex, THUMB_SIZE)
-        : imageThumbnailUrl(store.get(content.sourceId), THUMB_SIZE);
+        : imageThumbnailUrl(await store.get(content.sourceId), THUMB_SIZE);
     });
     thumbnailQueue = task.catch(() => {});
     task.catch(() => thumbnails.delete(key));
@@ -327,6 +455,7 @@ const ICONS = {
   right: svg('<path d="M9 18l6-6-6-6"/>'),
   rotate: svg('<path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/>'),
   trash: svg('<path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 13h10l1-13"/><path d="M9 7V4h6v3"/>'),
+  grip: svg('<circle cx="9" cy="6" r="1.2"/><circle cx="15" cy="6" r="1.2"/><circle cx="9" cy="12" r="1.2"/><circle cx="15" cy="12" r="1.2"/><circle cx="9" cy="18" r="1.2"/><circle cx="15" cy="18" r="1.2"/>'),
 };
 
 // ---- お知らせ・処理中の表示 ----
@@ -357,12 +486,21 @@ function formatBytes(bytes) {
 
 // ---- モード ----
 
-function applyMode(mode) {
+function applyMode(next) {
+  mode = next;
   document.body.classList.toggle('mode-easy', mode === 'easy');
   document.body.classList.toggle('mode-detail', mode === 'detail');
   for (const button of document.querySelectorAll('[data-mode]')) {
     button.setAttribute('aria-pressed', String(button.dataset.mode === mode));
   }
+  render();
+}
+
+function goToStep(step) {
+  easyStep = step;
+  render();
+  saveStateSoon();
+  scrollTo({ top: 0 });
 }
 
 // ---- 操作の受け付け ----
@@ -370,6 +508,9 @@ function applyMode(mode) {
 function onAction(action) {
   switch (action) {
     case 'camera':
+      camera.open();
+      break;
+    case 'os-camera':
       els.inputCamera.click();
       break;
     case 'pick-photos':
@@ -379,7 +520,13 @@ function onAction(action) {
       els.inputFiles.click();
       break;
     case 'clear':
-      if (confirm('すべてのページを削除しますか？')) update(createDocument());
+      if (confirm('すべてのページを削除しますか？')) startOver();
+      break;
+    case 'go-save':
+      goToStep('save');
+      break;
+    case 'back-to-confirm':
+      goToStep('confirm');
       break;
     case 'export':
       createPdf();
@@ -418,6 +565,8 @@ function onPageOp(op, pageId) {
     case 'delete':
       update(removePages(doc, [pageId]));
       break;
+    default:
+      return;
   }
   // 描き直したあとも、同じページの同じボタンに操作の位置を残す
   const button = els.grid.querySelector(`[data-id="${CSS.escape(pageId)}"] [data-op="${op}"]`);
@@ -440,12 +589,18 @@ document.addEventListener('click', (event) => {
   if (opTarget) onPageOp(opTarget.dataset.op, opTarget.closest('[data-id]').dataset.id);
 });
 
+enableDragReorder(els.grid, (pageId, toIndex) => update(movePages(doc, [pageId], toIndex)));
+
 for (const input of [els.inputPhotos, els.inputCamera, els.inputFiles]) {
   input.addEventListener('change', () => {
     const files = [...input.files];
     input.value = ''; // 同じファイルをもう一度選べるようにする
     addFiles(files);
   });
+}
+
+for (const input of [els.fileName, els.paper, els.quality]) {
+  input.addEventListener('change', saveStateSoon);
 }
 
 // ドラッグ＆ドロップでの追加
@@ -471,19 +626,20 @@ window.addEventListener('drop', (event) => {
   addFiles(event.dataTransfer.files);
 });
 
-// M2で自動保存を入れるまでは、作業中にページを閉じようとしたら確認する
-window.addEventListener('beforeunload', (event) => {
-  if (doc.pages.length > 0) event.preventDefault();
+// ほかのアプリに切り替えるときは、待たずにすぐ保存する
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) saveStateNow();
 });
+window.addEventListener('pagehide', () => saveStateNow());
 
 // ---- 起動 ----
 
-applyMode(currentMode());
-render();
+await restoreState();
+applyMode(mode);
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   navigator.serviceWorker.register('./sw.js').catch((error) => console.warn('Service Worker を登録できませんでした', error));
 }
 
 // 画面テストから状態を確かめるための入り口（アプリの動作には使わない）
-window.__relapdf = { getDoc: () => doc };
+window.__relapdf = { getDoc: () => doc, flushSave: () => saveStateNow() };

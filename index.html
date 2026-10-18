@@ -68,7 +68,8 @@
 }
 
 * { box-sizing: border-box; }
-html { -webkit-text-size-adjust: 100%; }
+/* 画面の下に固定したバーの裏に、操作中の部品が隠れないようにする */
+html { -webkit-text-size-adjust: 100%; scroll-padding-bottom: 110px; }
 body {
   margin: 0;
   min-height: 100dvh;
@@ -176,6 +177,45 @@ body.mode-easy .page-grid { grid-template-columns: repeat(auto-fill, minmax(140p
 .icon-btn:disabled { opacity: .3; cursor: default; }
 .icon-btn svg { width: 20px; height: 20px; }
 
+/* ---- 手順（かんたんモード） ---- */
+.steps {
+  display: flex; justify-content: center; gap: 4px; list-style: none; margin: 0; padding: 10px 16px 0;
+  font-size: 13px; color: var(--text-muted);
+}
+.steps li { display: flex; align-items: center; gap: 6px; padding: 4px 10px 4px 4px; border-radius: 999px; }
+.steps li + li::before { content: ""; width: 14px; height: 1px; background: var(--border); margin-right: 6px; }
+.steps .num {
+  width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--surface-2); font-weight: 700; font-size: 12px;
+}
+.steps li[aria-current="step"] { color: var(--text); font-weight: 700; }
+.steps li[aria-current="step"] .num { background: var(--accent); color: var(--accent-text); }
+
+/* ---- ドラッグでの並べ替え ---- */
+.grip { touch-action: none; cursor: grab; }
+body.mode-detail .thumb { cursor: grab; }
+.page-card.dragging {
+  position: relative; z-index: 20; opacity: .92; cursor: grabbing;
+  box-shadow: 0 12px 32px rgba(20, 30, 50, .28); transition: none;
+}
+.page-grid.is-dragging { user-select: none; -webkit-user-select: none; }
+.page-card.drop-before, .page-card.drop-after { position: relative; }
+.page-card.drop-before::before, .page-card.drop-after::after {
+  content: ""; position: absolute; top: 0; bottom: 0; width: 4px; border-radius: 2px; background: var(--accent);
+}
+.page-card.drop-before::before { left: -8px; }
+.page-card.drop-after::after { right: -8px; }
+
+/* ---- 確認画面の「保存へ進む」 ---- */
+.next-bar {
+  position: sticky; bottom: 0; z-index: 10;
+  padding: 12px 16px calc(12px + var(--safe-bottom));
+  background: var(--surface); border-top: 1px solid var(--border);
+  box-shadow: 0 -4px 16px rgba(20, 30, 50, .06);
+}
+.next-bar .btn { width: 100%; max-width: 560px; display: flex; margin: 0 auto; min-height: 54px; font-size: 17px; }
+body.mode-detail .next-bar { display: none !important; }
+
 /* ---- 書き出し ---- */
 .export-bar {
   position: sticky; bottom: 0; z-index: 10;
@@ -193,9 +233,24 @@ body.mode-easy .page-grid { grid-template-columns: repeat(auto-fill, minmax(140p
 .field.grow { flex: 1 1 220px; }
 .field.grow input { width: 100%; }
 .export-bar .btn.primary { margin-left: auto; min-width: 140px; }
+/* かんたんモードの「3 保存」では、画面の中央にカードとして出す */
+body.mode-easy[data-step="save"] main { display: none; }
+body.mode-easy .export-bar {
+  position: static; flex: 1; align-items: flex-start; background: transparent; border: 0; box-shadow: none;
+  padding: 16px 16px calc(24px + var(--safe-bottom));
+}
+body.mode-easy .export-bar .inner {
+  max-width: 560px; padding: 20px; gap: 16px; border-radius: 20px;
+  background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow);
+}
+.save-head { width: 100%; }
+.save-head .back { margin: -8px 0 4px -10px; padding: 0 10px; min-height: 36px; }
+.save-head h2 { margin: 0; font-size: 22px; }
+.save-head p { margin: 2px 0 0; color: var(--text-muted); font-size: 14px; }
+body.mode-easy .export-bar .field { font-size: 13px; }
 body.mode-easy .export-bar .field.grow { flex-basis: 100%; }
 body.mode-easy .export-bar .field:not(.grow) { flex: 1 1 90px; }
-body.mode-easy .export-bar .btn.primary { flex: 1 1 140px; min-height: 52px; font-size: 17px; }
+body.mode-easy .export-bar .btn.primary { flex: 1 1 100%; min-height: 56px; font-size: 18px; margin-left: 0; }
 
 /* ---- ダイアログ・お知らせ ---- */
 dialog {
@@ -239,6 +294,59 @@ dialog .actions { display: flex; flex-direction: column; gap: 10px; }
   background: color-mix(in srgb, var(--accent-soft) 85%, transparent);
   font-size: 22px; font-weight: 700; color: var(--accent); pointer-events: none;
 }
+/* ---- アプリ内カメラ ---- */
+.camera {
+  position: fixed; inset: 0; z-index: 70; background: #000; color: #fff;
+  display: flex; flex-direction: column;
+}
+body.camera-open { overflow: hidden; }
+.camera video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
+.camera::after { content: ""; position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; }
+.camera.flash::after { animation: flash .18s ease-out; }
+@keyframes flash { from { opacity: .7; } to { opacity: 0; } }
+.camera-top {
+  position: relative; display: flex; justify-content: center;
+  padding: calc(env(safe-area-inset-top, 0px) + 12px) 16px 12px;
+}
+.camera-count {
+  padding: 4px 14px; border-radius: 999px; background: rgba(0, 0, 0, .55);
+  font-weight: 700; font-size: 15px;
+}
+.camera-error {
+  position: relative; margin: auto 24px; padding: 20px; border-radius: 16px;
+  background: rgba(30, 34, 42, .92); text-align: center; display: grid; gap: 14px;
+}
+.camera-error p { margin: 0; line-height: 1.7; }
+.camera-bottom {
+  position: relative; margin-top: auto;
+  display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 16px;
+  padding: 20px 24px calc(env(safe-area-inset-bottom, 0px) + 24px);
+  background: linear-gradient(to top, rgba(0, 0, 0, .6), transparent);
+}
+.camera-last-wrap { justify-self: start; width: 56px; height: 56px; }
+.camera-last { width: 56px; height: 56px; object-fit: cover; border-radius: 10px; border: 2px solid #fff; display: block; }
+.shutter {
+  width: 76px; height: 76px; border-radius: 50%; cursor: pointer;
+  border: 5px solid #fff; background: rgba(255, 255, 255, .9); box-shadow: inset 0 0 0 3px #000;
+}
+.shutter:active:not(:disabled) { transform: scale(.94); }
+.shutter:disabled { opacity: .4; cursor: default; }
+.camera-done {
+  justify-self: end; min-width: 76px; min-height: 48px; padding: 0 18px; border-radius: 999px; border: 0;
+  background: var(--accent); color: #fff; font-weight: 700; font-size: 16px; cursor: pointer;
+}
+/* 横向きのときは、ボタンを右側に縦に並べる */
+@media (orientation: landscape) and (max-height: 500px) {
+  .camera-bottom {
+    position: absolute; right: 0; top: 0; bottom: 0; margin: 0;
+    grid-template-columns: auto; grid-template-rows: 1fr auto 1fr; justify-items: center;
+    padding: 16px calc(env(safe-area-inset-right, 0px) + 20px) 16px 20px;
+    background: linear-gradient(to left, rgba(0, 0, 0, .6), transparent);
+  }
+  .camera-last-wrap { justify-self: center; align-self: start; }
+  .camera-done { justify-self: center; align-self: end; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .spinner { animation-duration: 2s; }
   .thumb img { transition: none; }
@@ -255,16 +363,23 @@ dialog .actions { display: flex; flex-direction: column; gap: 10px; }
   </div>
 </header>
 
+<ol id="steps" class="steps easy-only" aria-label="手順">
+  <li data-step="capture"><span class="num">1</span>撮る・選ぶ</li>
+  <li data-step="confirm"><span class="num">2</span>確認</li>
+  <li data-step="save"><span class="num">3</span>保存</li>
+</ol>
+
 <main>
   <section id="empty" class="empty">
     <h2 class="easy-only">写真をPDFに</h2>
     <h2 class="detail-only">PDFを作る・まとめる</h2>
-    <p class="lead easy-only">撮るか選ぶだけ。順番を確認して保存します。</p>
+    <p class="lead easy-only">続けて何枚でも撮れます。順番を確認して保存します。</p>
     <p class="lead detail-only">PDFや画像をここにドロップするか、ファイルを選んでください。</p>
     <div class="empty-actions">
       <button type="button" class="btn primary big easy-only" data-action="camera">カメラで撮る</button>
       <button type="button" class="btn big easy-only" data-action="pick-photos">写真を選ぶ</button>
       <button type="button" class="btn primary big detail-only" data-action="pick-files">ファイルを選ぶ</button>
+      <button type="button" class="btn subtle easy-only" data-action="os-camera">端末のカメラアプリで撮る</button>
     </div>
     <p class="privacy">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
@@ -284,8 +399,17 @@ dialog .actions { display: flex; flex-direction: column; gap: 10px; }
   </section>
 </main>
 
+<footer id="next-bar" class="next-bar" hidden>
+  <button type="button" class="btn primary" data-action="go-save">保存へ進む<span id="next-count"></span></button>
+</footer>
+
 <footer id="export-bar" class="export-bar" hidden>
   <div class="inner">
+    <div class="save-head easy-only">
+      <button type="button" class="btn subtle back" data-action="back-to-confirm">‹ 確認に戻る</button>
+      <h2>保存する</h2>
+      <p id="save-summary"></p>
+    </div>
     <label class="field grow">ファイル名
       <input id="file-name" type="text" autocomplete="off" enterkeyhint="done">
     </label>
@@ -304,6 +428,22 @@ dialog .actions { display: flex; flex-direction: column; gap: 10px; }
     <button type="button" class="btn primary" data-action="export">PDFを作成</button>
   </div>
 </footer>
+
+<div id="camera" class="camera" hidden role="dialog" aria-modal="true" aria-label="カメラ">
+  <video id="camera-video" playsinline muted autoplay></video>
+  <div class="camera-top">
+    <span class="camera-count" id="camera-count" aria-live="polite">0枚</span>
+  </div>
+  <div id="camera-error" class="camera-error" hidden>
+    <p id="camera-error-text"></p>
+    <button type="button" class="btn primary" data-camera="os-camera">端末のカメラアプリで撮る</button>
+  </div>
+  <div class="camera-bottom">
+    <div class="camera-last-wrap"><img id="camera-last" class="camera-last" alt="最後に撮った写真" hidden></div>
+    <button type="button" id="camera-shutter" class="shutter" data-camera="shoot" aria-label="撮影" disabled></button>
+    <button type="button" class="camera-done" data-camera="done">完了</button>
+  </div>
+</div>
 
 <input type="file" id="input-photos" accept="image/*" multiple hidden>
 <input type="file" id="input-camera" accept="image/*" capture="environment" hidden>

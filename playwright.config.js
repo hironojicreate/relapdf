@@ -16,7 +16,12 @@ export default defineConfig({
     baseURL: `http://localhost:${PORT}/`,
     trace: 'retain-on-failure',
     // 文字コードの設定がない環境では、日本語のファイル名でダウンロードすると「download」に置き換わるため
-    launchOptions: { env: { ...process.env, LANG: process.env.LANG || 'C.UTF-8' } },
+    launchOptions: {
+      env: { ...process.env, LANG: process.env.LANG || 'C.UTF-8' },
+      // カメラの代わりに、Chromium のテスト用の映像を使う（許可の確認も自動で通す）
+      args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'],
+    },
+    permissions: ['camera'],
   },
   webServer: {
     command: `node tests/e2e/server.js ${PORT}`,

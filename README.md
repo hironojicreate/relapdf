@@ -7,7 +7,7 @@
 
 単一HTMLのPWAとして作り、オフラインでも動きます。
 
-> 開発中です（現在 M1：土台）。進み具合は [docs/handover.md](docs/handover.md) を見てください。
+> 開発中です（現在 M2：かんたんモード v1 まで）。進み具合は [docs/handover.md](docs/handover.md) を見てください。
 
 ## ドキュメント
 
@@ -26,7 +26,7 @@ manifest.webmanifest    PWAの設定（アプリ名・アイコン）
 sw.js                   Service Worker（オフライン対応）
 precache-manifest.js    キャッシュするファイルの一覧（自動生成）
 src/core/               Core層：ページリストの操作やPDF生成。画面に触らない
-src/web/                ブラウザ側の部品：画像の読み込み、PDFの表示、保存
+src/web/                ブラウザ側の部品：画像の読み込み、PDFの表示、保存、カメラ、端末内への保存
 src/app/                画面の動き
 vendor/                 同梱ライブラリ（pdf-lib、PDF.js）
 icons/                  アイコン

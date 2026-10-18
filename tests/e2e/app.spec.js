@@ -27,6 +27,9 @@ async function addFiles(page, files, testInfo) {
 }
 
 async function exportAndDownload(page) {
+  // かんたんモードでは「保存へ進む」で3番目の段階に進んでから作成する
+  const goSave = page.locator('[data-action="go-save"]');
+  if (await goSave.isVisible()) await goSave.click();
   await page.click('[data-action="export"]');
   await expect(page.locator('#result-dialog')).toBeVisible();
   const [download] = await Promise.all([page.waitForEvent('download'), page.click('[data-action="download"]')]);
@@ -66,6 +69,8 @@ test('写真1枚をPDFにして保存できる（M1の完了の目安）', async
   await expect(loadedThumbs(page)).toHaveCount(1);
   await expect(page.locator('#page-count')).toHaveText('1ページ');
 
+  const goSave = page.locator('[data-action="go-save"]');
+  if (await goSave.isVisible()) await goSave.click(); // かんたんモードはファイル名を3番目の段階で入れる
   await page.fill('#file-name', '見積書');
   const { name, pdf } = await exportAndDownload(page);
   expect(name).toBe('見積書.pdf');
@@ -166,6 +171,8 @@ test('送る（共有シート）が終わったら「完了しました」と�
   await page.goto('./');
   await addFiles(page, [fixture('photo-landscape.jpg')], testInfo);
   await expect(cards(page)).toHaveCount(1);
+  const goSave = page.locator('[data-action="go-save"]');
+  if (await goSave.isVisible()) await goSave.click();
   await page.click('[data-action="export"]');
   await expect(page.locator('#share-button')).toBeVisible();
 
