@@ -6,6 +6,12 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "test": "node --test \"tests/core/**/*.test.js\""
+    "test": "node --test \"tests/core/**/*.test.js\" \"tests/web/**/*.test.js\" \"tests/tools/**/*.test.js\"",
+    "test:e2e": "playwright test",
+    "precache": "node scripts/precache.js",
+    "serve": "node tests/e2e/server.js"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1"
   }
 }

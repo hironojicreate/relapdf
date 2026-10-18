@@ -11,7 +11,7 @@
 1. **ページリスト方式**
    読み込んだPDF・画像をすべて「ページの並び」として扱う。各ページは「元データ・回転・補正情報」を持つ。結合・並べ替え・削除・抽出・写真のPDF化を、すべて同じ仕組みで扱う。仕様は [page-list.md](page-list.md) を参照。
 2. **Core層とUI層を分ける**
-   ページリストの操作やPDF生成はCore（`src/core/`）、画面はUI（`index.html`）が担当する。CoreはDOMやブラウザ専用のAPIに触らず、Node.jsでテストできるようにする。
+   ページリストの操作やPDF生成はCore（`src/core/`）、画面はUI（`index.html` と `src/app/`）が担当する。CoreはDOMやブラウザ専用のAPIに触らず、Node.jsでテストできるようにする。画像の読み込みやPDFの表示など、ブラウザが必要な部品は `src/web/` に置く。
 3. **状態は変更せず、新しく作る**
    Coreの操作は元の状態を書き換えず、新しい状態を返す。こうしておくと「元に戻す」機能や自動保存を作りやすい。
 4. **状態とファイルの中身を分ける**
@@ -29,9 +29,11 @@
 |---|---|---|
 | アプリ名 | **RelaPDF** | RelaVas・Relamemoとシリーズで名前をそろえる。「PDF」はISO規格の名前なので使ってよい |
 | ライセンス | **MIT** | 誰でも自由に使えるが、作者名とライセンス文を残すことが条件。無保証 |
-| ファイル構成 | `index.html` を本体とし、`sw.js`・manifest・アイコン・`vendor/`（ライブラリ）は別ファイル | Service Workerは別ファイルにしかできない。ライブラリを全部埋め込むと最初の読み込みが重くなる |
+| ファイル構成 | `index.html`（画面の骨組みとCSS）を本体とし、JavaScript（`src/`）・`sw.js`・manifest・アイコン・`vendor/`（ライブラリ）は別ファイル | Service Workerは別ファイルにしかできない。ライブラリを全部埋め込むと最初の読み込みが重くなる。JavaScriptをHTMLに直接書くとCSPで `unsafe-inline` を許す必要があるため、別ファイルにした |
 | ビルド | **なし**（ファイルをそのまま公開） | 構成を単純に保つ。CoreはES Modulesで書き、ブラウザとNodeの両方から読み込む |
-| テスト | Core：Node標準の `node:test`。画面：Playwright（M1から） | 外部パッケージを増やさない |
+| テスト | Core：Node標準の `node:test`（`npm test`）。画面：Playwright（`npm run test:e2e`） | 開発用のパッケージは Playwright だけ |
+| オフライン対応 | `sw.js` がアプリの全ファイルを最初にキャッシュする。一覧とバージョンは `scripts/precache.js` が作る `precache-manifest.js` | ファイルを変えたら `npm run precache`。古いままだと `npm test` が失敗して知らせる |
+| 保存・共有 | PDFを作り終えてから「送る・保存する」「ダウンロード」ボタンを出す | iPhoneの共有シートは、ボタンを押した直後でないと開けないため |
 | ライブラリの置き場所 | **リポジトリに同梱** | オフラインで動かすため。CDNは使わない |
 | 公開先 | **Vercel**（GitHubリポジトリと連携して自動で公開） | アクセス数を見るため |
 | アクセス解析 | **Vercel Web Analytics**（アクセス数がわかる程度） | Cookieを使わない。ファイルの中身は送らない |
@@ -49,12 +51,12 @@
 
 ## 4. 使うライブラリ
 
-MIT・Apache・OFL系に限り、AGPL系は使わない。どれもリポジトリの `vendor/` に同梱する。
+MIT・Apache・OFL系に限り、AGPL系は使わない。どれもリポジトリの `vendor/` に同梱する（詳細は `vendor/README.md`）。
 
 | ライブラリ | 用途 | ライセンス | 使い始め |
 |---|---|---|---|
-| pdf-lib | PDFの生成・編集 | MIT | M1 |
-| PDF.js | PDFの表示・画像化 | Apache 2.0 | M1 |
+| pdf-lib 1.17.1 | PDFの生成・編集 | MIT | M1 |
+| PDF.js 6.4.299（legacy版） | PDFの表示・画像化 | Apache 2.0 | M1 |
 | fflate | 複数の画像をZIPにまとめる | MIT | M4 |
 | OpenCV.js（または自作の軽い処理） | 四隅の自動検出 | Apache 2.0 | M5 |
 | Noto Sans JP | 日本語フォント | OFL | M6 |
@@ -69,3 +71,4 @@ MIT・Apache・OFL系に限り、AGPL系は使わない。どれもリポジト�
 - **OpenCV.jsのサイズ**：約8〜10MBある。四隅の検出だけなら自作の軽い処理で済む可能性があるので、M5で比べて決める。
 - **iPhoneのPWAとカメラ**：ホーム画面から起動したPWAでは、カメラの許可を何度も聞かれることがある。実機で確認する。
 - **アプリ内カメラの画質**：OSのカメラより落ちやすい。そのため「OSのカメラで撮る」も用意する。
+- **画面テストのiPhoneはSafariではない**：この開発環境にはChromiumしかないため、iPhoneの画面サイズとタッチ操作をChromiumで再現している。Safari特有の動きは実機で確認する。

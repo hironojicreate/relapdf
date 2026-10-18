@@ -1,1 +1,314 @@
-<h1>RelaPDF</h1>
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self' data:; connect-src 'self' blob: data:; worker-src 'self' blob:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>RelaPDF</title>
+<meta name="description" content="写真をPDFに、PDFの結合・ページ整理も。ブラウザの中だけで動き、ファイルは端末の外に出ません。">
+<meta name="theme-color" content="#2f6df6">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="RelaPDF">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<style>
+:root {
+  --bg: #f4f6f9;
+  --surface: #ffffff;
+  --surface-2: #eef1f5;
+  --text: #1c2330;
+  --text-muted: #5d6778;
+  --border: #d9dee6;
+  --accent: #2f6df6;
+  --accent-text: #ffffff;
+  --accent-soft: #e6eeff;
+  --danger: #d33a3a;
+  --shadow: 0 1px 2px rgba(20, 30, 50, .06), 0 2px 8px rgba(20, 30, 50, .06);
+  --radius: 12px;
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12151b;
+    --surface: #1b2029;
+    --surface-2: #242a35;
+    --text: #e8ecf2;
+    --text-muted: #9aa4b5;
+    --border: #333b48;
+    --accent: #5b8cff;
+    --accent-text: #0b1020;
+    --accent-soft: #1f2b47;
+    --danger: #ff6b6b;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 2px 8px rgba(0, 0, 0, .25);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #12151b;
+  --surface: #1b2029;
+  --surface-2: #242a35;
+  --text: #e8ecf2;
+  --text-muted: #9aa4b5;
+  --border: #333b48;
+  --accent: #5b8cff;
+  --accent-text: #0b1020;
+  --accent-soft: #1f2b47;
+  --danger: #ff6b6b;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 2px 8px rgba(0, 0, 0, .25);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  min-height: 100dvh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic UI", Meiryo, sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
+  display: flex;
+  flex-direction: column;
+}
+button, input, select { font: inherit; color: inherit; }
+[hidden] { display: none !important; }
+body.mode-easy .detail-only, body.mode-detail .easy-only { display: none !important; }
+
+/* ---- ヘッダー ---- */
+.app-header {
+  position: sticky; top: 0; z-index: 10;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: calc(env(safe-area-inset-top, 0px) + 10px) 16px 10px;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--border);
+}
+.brand { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 18px; font-weight: 700; letter-spacing: .02em; }
+.brand img { display: block; border-radius: 7px; }
+.segmented { display: inline-flex; padding: 3px; border-radius: 999px; background: var(--surface-2); }
+.segmented button {
+  border: 0; background: transparent; padding: 6px 14px; border-radius: 999px;
+  font-size: 14px; color: var(--text-muted); cursor: pointer; min-height: 36px;
+}
+.segmented button[aria-pressed="true"] { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: var(--shadow); }
+
+/* ---- ボタン ---- */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: 44px; padding: 0 16px; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--surface); cursor: pointer;
+  font-weight: 600; text-decoration: none; white-space: nowrap;
+}
+.btn:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.btn.primary:hover { filter: brightness(1.06); }
+.btn.big { min-height: 64px; font-size: 18px; border-radius: 14px; padding: 0 24px; }
+.btn.subtle { background: transparent; border-color: transparent; color: var(--text-muted); font-weight: 500; }
+.btn:disabled { opacity: .5; cursor: default; }
+.btn svg { width: 20px; height: 20px; flex: none; }
+:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 60%, transparent); outline-offset: 2px; }
+
+/* ---- 最初の画面 ---- */
+main { flex: 1; width: 100%; max-width: 1200px; margin: 0 auto; padding: 16px; }
+.empty {
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+  padding: 48px 16px; margin-top: 4vh;
+  border: 2px dashed var(--border); border-radius: 20px; background: var(--surface);
+}
+body.mode-easy .empty { border-style: solid; border-width: 1px; }
+.empty h2 { margin: 0 0 6px; font-size: 22px; }
+.empty .lead { margin: 0 0 24px; color: var(--text-muted); }
+.empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; width: 100%; }
+body.mode-easy .empty-actions { flex-direction: column; max-width: 360px; }
+.privacy { margin: 24px 0 0; font-size: 13px; color: var(--text-muted); display: flex; align-items: center; gap: 6px; }
+.privacy svg { width: 16px; height: 16px; }
+
+/* ---- ページ一覧 ---- */
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
+.toolbar .count { font-weight: 600; }
+.toolbar [data-action="clear"] { margin-right: auto; padding: 0 10px; }
+.page-grid {
+  list-style: none; margin: 0; padding: 0;
+  display: grid; gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+}
+body.mode-easy .page-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+.page-card {
+  display: flex; flex-direction: column;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow); overflow: hidden;
+}
+.thumb { position: relative; aspect-ratio: 1; background: var(--surface-2); }
+/* 正方形の枠に収める。枠が正方形なので、90度回転しても枠からはみ出さない */
+.thumb img, .thumb .blank, .thumb .spinner {
+  position: absolute; inset: 0; margin: auto;
+}
+.thumb img, .thumb .blank {
+  max-width: calc(100% - 20px); max-height: calc(100% - 20px); display: block;
+  background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .18);
+  transition: transform .2s ease;
+}
+.thumb .blank { height: calc(100% - 20px); aspect-ratio: 210 / 297; }
+.page-no {
+  position: absolute; left: 8px; top: 8px; z-index: 1; min-width: 26px; height: 26px; padding: 0 7px;
+  border-radius: 13px; background: var(--accent); color: var(--accent-text);
+  font-size: 13px; font-weight: 700; display: grid; place-items: center;
+}
+.page-src { padding: 6px 10px 0; font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.page-actions { display: flex; justify-content: space-between; padding: 4px; }
+.icon-btn {
+  display: grid; place-items: center; width: 44px; height: 40px;
+  border: 0; border-radius: 8px; background: transparent; color: var(--text-muted); cursor: pointer;
+}
+.icon-btn:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
+.icon-btn.danger:hover:not(:disabled) { color: var(--danger); }
+.icon-btn:disabled { opacity: .3; cursor: default; }
+.icon-btn svg { width: 20px; height: 20px; }
+
+/* ---- 書き出し ---- */
+.export-bar {
+  position: sticky; bottom: 0; z-index: 10;
+  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 12px;
+  padding: 12px 16px calc(12px + var(--safe-bottom));
+  background: var(--surface); border-top: 1px solid var(--border);
+  box-shadow: 0 -4px 16px rgba(20, 30, 50, .06);
+}
+.export-bar .inner { width: 100%; max-width: 1200px; margin: 0 auto; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 12px; }
+.field { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--text-muted); }
+.field input, .field select {
+  min-height: 44px; padding: 0 12px; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 16px;
+}
+.field.grow { flex: 1 1 220px; }
+.field.grow input { width: 100%; }
+.export-bar .btn.primary { margin-left: auto; min-width: 140px; }
+body.mode-easy .export-bar .field.grow { flex-basis: 100%; }
+body.mode-easy .export-bar .field:not(.grow) { flex: 1 1 90px; }
+body.mode-easy .export-bar .btn.primary { flex: 1 1 140px; min-height: 52px; font-size: 17px; }
+
+/* ---- ダイアログ・お知らせ ---- */
+dialog {
+  border: 0; border-radius: 18px; padding: 24px; width: min(420px, calc(100vw - 32px));
+  background: var(--surface); color: var(--text); box-shadow: 0 20px 60px rgba(0, 0, 0, .3);
+}
+dialog::backdrop { background: rgba(10, 15, 25, .45); }
+dialog h2 { margin: 0 0 4px; font-size: 20px; }
+dialog .meta { margin: 0 0 20px; color: var(--text-muted); font-size: 14px; word-break: break-all; }
+dialog .actions { display: flex; flex-direction: column; gap: 10px; }
+.busy {
+  position: fixed; inset: 0; z-index: 50; display: grid; place-content: center; justify-items: center; gap: 12px;
+  background: color-mix(in srgb, var(--bg) 70%, transparent); backdrop-filter: blur(2px);
+}
+.busy p { margin: 0; font-weight: 600; }
+.spinner {
+  width: 40px; height: 40px; border-radius: 50%;
+  border: 4px solid var(--accent-soft); border-top-color: var(--accent);
+  animation: spin .8s linear infinite;
+}
+.thumb .spinner { width: 28px; height: 28px; border-width: 3px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.toast {
+  position: fixed; left: 50%; bottom: calc(24px + var(--safe-bottom)); transform: translateX(-50%); z-index: 60;
+  max-width: calc(100vw - 32px); padding: 12px 18px; border-radius: 12px;
+  background: var(--text); color: var(--bg); box-shadow: var(--shadow); font-size: 14px;
+  opacity: 0; pointer-events: none; transition: opacity .2s;
+}
+.toast.show { opacity: 1; }
+.toast.error { background: var(--danger); color: #fff; }
+.drop-overlay {
+  position: fixed; inset: 12px; z-index: 40; display: grid; place-items: center;
+  border: 3px dashed var(--accent); border-radius: 20px;
+  background: color-mix(in srgb, var(--accent-soft) 85%, transparent);
+  font-size: 22px; font-weight: 700; color: var(--accent); pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation-duration: 2s; }
+  .thumb img { transition: none; }
+}
+</style>
+<script type="module" src="src/app/main.js"></script>
+</head>
+<body class="mode-detail">
+<header class="app-header">
+  <h1 class="brand"><img src="icons/icon.svg" alt="" width="28" height="28">RelaPDF</h1>
+  <div class="segmented" role="group" aria-label="モードの切り替え">
+    <button type="button" data-mode="easy" aria-pressed="false">かんたん</button>
+    <button type="button" data-mode="detail" aria-pressed="true">詳細</button>
+  </div>
+</header>
+
+<main>
+  <section id="empty" class="empty">
+    <h2 class="easy-only">写真をPDFに</h2>
+    <h2 class="detail-only">PDFを作る・まとめる</h2>
+    <p class="lead easy-only">撮るか選ぶだけ。順番を確認して保存します。</p>
+    <p class="lead detail-only">PDFや画像をここにドロップするか、ファイルを選んでください。</p>
+    <div class="empty-actions">
+      <button type="button" class="btn primary big easy-only" data-action="camera">カメラで撮る</button>
+      <button type="button" class="btn big easy-only" data-action="pick-photos">写真を選ぶ</button>
+      <button type="button" class="btn primary big detail-only" data-action="pick-files">ファイルを選ぶ</button>
+    </div>
+    <p class="privacy">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+      ファイルは端末の外に出ません
+    </p>
+  </section>
+
+  <section id="workspace" hidden>
+    <div class="toolbar">
+      <span class="count" id="page-count"></span>
+      <button type="button" class="btn subtle" data-action="clear">すべて削除</button>
+      <button type="button" class="btn easy-only" data-action="camera">撮る</button>
+      <button type="button" class="btn easy-only" data-action="pick-photos">選ぶ</button>
+      <button type="button" class="btn detail-only" data-action="pick-files">ファイルを追加</button>
+    </div>
+    <ol id="page-grid" class="page-grid" aria-label="ページの一覧"></ol>
+  </section>
+</main>
+
+<footer id="export-bar" class="export-bar" hidden>
+  <div class="inner">
+    <label class="field grow">ファイル名
+      <input id="file-name" type="text" autocomplete="off" enterkeyhint="done">
+    </label>
+    <label class="field">写真の用紙
+      <select id="paper">
+        <option value="a4">A4</option>
+        <option value="image">写真のサイズ</option>
+      </select>
+    </label>
+    <label class="field">画質
+      <select id="quality">
+        <option value="standard">標準</option>
+        <option value="high">高画質</option>
+      </select>
+    </label>
+    <button type="button" class="btn primary" data-action="export">PDFを作成</button>
+  </div>
+</footer>
+
+<input type="file" id="input-photos" accept="image/*" multiple hidden>
+<input type="file" id="input-camera" accept="image/*" capture="environment" hidden>
+<input type="file" id="input-files" accept="application/pdf,.pdf,image/*" multiple hidden>
+
+<dialog id="result-dialog" aria-labelledby="result-title">
+  <h2 id="result-title">PDFができました</h2>
+  <p class="meta" id="result-meta"></p>
+  <div class="actions">
+    <button type="button" class="btn primary" data-action="share" id="share-button">送る・保存する</button>
+    <button type="button" class="btn" data-action="download" id="download-button">ダウンロード</button>
+    <button type="button" class="btn subtle" data-action="close-result">閉じる</button>
+  </div>
+</dialog>
+
+<div id="busy" class="busy" hidden role="alert" aria-busy="true"><div class="spinner"></div><p id="busy-text"></p></div>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<div id="drop-overlay" class="drop-overlay" hidden>ここにドロップして追加</div>
+<noscript><p style="padding:16px">RelaPDFを使うには、JavaScriptを有効にしてください。</p></noscript>
+</body>
+</html>
