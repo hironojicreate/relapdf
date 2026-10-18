@@ -30,7 +30,7 @@ async function exportAndDownload(page) {
   // かんたんモードでは「保存へ進む」で3番目の段階に進んでから作成する
   const goSave = page.locator('[data-action="go-save"]');
   if (await goSave.isVisible()) await goSave.click();
-  await page.click('[data-action="export"]');
+  await page.click('[data-action="export"]:visible');
   await expect(page.locator('#result-dialog')).toBeVisible();
   const [download] = await Promise.all([page.waitForEvent('download'), page.click('[data-action="download"]')]);
   await expect(page.locator('#done-title')).toHaveText('保存しました');
@@ -173,7 +173,7 @@ test('送る（共有シート）が終わったら「完了しました」と�
   await expect(cards(page)).toHaveCount(1);
   const goSave = page.locator('[data-action="go-save"]');
   if (await goSave.isVisible()) await goSave.click();
-  await page.click('[data-action="export"]');
+  await page.click('[data-action="export"]:visible');
   await expect(page.locator('#share-button')).toBeVisible();
 
   await page.click('[data-action="share"]');

@@ -151,3 +151,45 @@ test('カメラで撮った最後の1枚を取り消せる', async ({ page }) =>
   await page.click('[data-camera="done"]');
   await expect(cards(page)).toHaveCount(2);
 });
+
+test('段階を行ったり来たりしても、「戻る」はいつも ③ → ② → ① の順になる', async ({ page }) => {
+  await startWithPhotos(page);
+  // ②→③→②→③→①→③ と、手順のボタンで行ったり来たりする
+  for (const name of ['save', 'confirm', 'save', 'capture', 'save']) {
+    await step(page, name).click();
+  }
+  await expect(currentStep(page)).toContainText('保存');
+  await page.goBack();
+  await expect(currentStep(page)).toContainText('確認');
+  await page.goBack();
+  await expect(currentStep(page)).toContainText('撮る・選ぶ');
+
+  // ①から③へ飛んだときも、戻るときは②を通る
+  await step(page, 'save').click();
+  await page.goBack();
+  await expect(currentStep(page)).toContainText('確認');
+
+  // カメラを開いて閉じたあとも、順番はくずれない
+  await step(page, 'capture').click();
+  await page.click('#empty [data-action="camera"]');
+  await expect(page.locator('#camera')).toBeVisible();
+  await page.goBack(); // カメラを閉じる
+  await expect(page.locator('#camera')).toBeHidden();
+  await step(page, 'save').click();
+  await page.goBack();
+  await expect(currentStep(page)).toContainText('確認');
+  await page.goBack();
+  await expect(currentStep(page)).toContainText('撮る・選ぶ');
+});
+
+test('③では「PDFを作成」が画面の下、「最初からやり直す」が右上の隅にある', async ({ page }) => {
+  await startWithPhotos(page);
+  await step(page, 'save').click();
+  const viewport = page.viewportSize();
+  const create = await page.locator('#next-bar [data-action="export"]').boundingBox();
+  const restart = await page.locator('#export-bar [data-action="restart"]').boundingBox();
+  expect(create.y + create.height).toBeGreaterThan(viewport.height - 100); // 画面の下
+  expect(restart.y).toBeLessThan(viewport.height / 2); // 上半分
+  expect(restart.x + restart.width).toBeGreaterThan(viewport.width / 2); // 右側
+  expect(create.y - (restart.y + restart.height)).toBeGreaterThan(150); // 十分に離れている
+});

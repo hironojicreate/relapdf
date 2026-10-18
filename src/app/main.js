@@ -409,12 +409,11 @@ function currentStep() {
   return easyStep;
 }
 
-/** 段階を移る（スマホの「戻る」で戻れるよう、履歴にも積む） */
-function setStep(step, { record = true } = {}) {
+/** 段階を移る（履歴の並びは render の中で整える） */
+function setStep(step) {
   const before = currentStep();
   easyStep = step;
   render();
-  if (record && mode === 'easy') stepHistory.push(currentStep());
   if (currentStep() !== before) scrollTo({ top: 0 });
 }
 
@@ -426,13 +425,14 @@ function render() {
 
   els.empty.hidden = easy ? step !== 'capture' : count > 0;
   els.workspace.hidden = count === 0 || (easy && step !== 'confirm');
-  els.nextBar.hidden = !(easy && count > 0 && step !== 'save');
+  els.nextBar.hidden = !(easy && count > 0);
   els.exportBar.hidden = count === 0 || (easy && step !== 'save');
   els.count.textContent = `${count}ページ`;
   els.nextCount.textContent = `（${count}ページ）`;
-  // ①の下のボタンは「確認へ進む」、②の下は「保存へ進む」
-  els.nextLabel.textContent = step === 'capture' ? '確認へ進む' : '保存へ進む';
-  els.nextButton.dataset.action = step === 'capture' ? 'go-confirm' : 'go-save';
+  // 画面下のボタン（親指で押しやすい場所）：①「確認へ進む」、②「保存へ進む」、③「PDFを作成」
+  const next = { capture: ['確認へ進む', 'go-confirm'], confirm: ['保存へ進む', 'go-save'], save: ['PDFを作成', 'export'] }[step];
+  els.nextLabel.textContent = next[0];
+  els.nextButton.dataset.action = easy ? next[1] : '';
   // ①に戻ってきたとき（ページがあるとき）は、追加で撮れることと、やり直せることを伝える
   els.emptyTitleEasy.textContent = count > 0 ? '写真を追加する' : '写真をPDFに';
   els.emptyLeadEasy.hidden = count > 0;
@@ -452,7 +452,11 @@ function render() {
   const cards = doc.pages.map((page, index) => renderCard(page, index, count));
   els.grid.replaceChildren(...cards);
   placeVersion();
+  // スマホの「戻る」で、いつも ③→②→① の順に戻れるよう、履歴の並びを今の段階に合わせる
+  if (historyReady && easy) stepHistory.sync(step);
 }
+
+let historyReady = false;
 
 /** バージョン表示が下のバー（保存へ進む・書き出し）に隠れないよう、バーの高さだけ上げる */
 function placeVersion() {
@@ -662,9 +666,8 @@ function closeOverlay() {
 }
 
 const stepHistory = createStepHistory({
-  getStep: currentStep,
   onNavigate: (step) => {
-    setStep(step, { record: false });
+    setStep(step);
     saveStateSoon();
   },
   closeOverlay,
@@ -901,8 +904,9 @@ els.version.textContent = `RelaPDF v${APP_VERSION}`;
 window.addEventListener('resize', placeVersion);
 
 await restoreState();
-applyMode(mode);
 stepHistory.seed(currentStep());
+historyReady = true;
+applyMode(mode);
 showInstallButtons(install.method);
 
 if (justUpdated()) toast(`最新版（v${APP_VERSION}）に更新しました`);

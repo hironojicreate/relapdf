@@ -222,6 +222,8 @@ body.mode-detail .thumb { cursor: grab; }
 }
 .next-bar .btn { width: 100%; max-width: 560px; display: flex; margin: 0 auto; min-height: 54px; font-size: 17px; }
 body.mode-detail .next-bar { display: none !important; }
+/* ③では保存のカードより下（画面のいちばん下）に置く */
+body.mode-easy .next-bar { order: 10; }
 
 /* ---- 書き出し ---- */
 .export-bar {
@@ -251,7 +253,7 @@ body.mode-easy .export-bar .inner {
   background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow);
 }
 .save-head { width: 100%; }
-.save-head .back { margin: -8px 0 4px -10px; padding: 0 10px; min-height: 36px; }
+.save-head .back { padding: 0 10px; min-height: 36px; }
 .save-head h2 { margin: 0; font-size: 22px; }
 .save-head p { margin: 2px 0 0; color: var(--text-muted); font-size: 14px; }
 body.mode-easy .export-bar .field { font-size: 13px; }
@@ -301,8 +303,12 @@ dialog .actions { display: flex; flex-direction: column; gap: 10px; }
 }
 .capture-more { margin: -8px 0 20px; padding: 10px 14px; border-radius: 12px; background: var(--accent-soft); font-size: 14px; }
 .capture-more p { margin: 0; }
-.btn.restart-link { margin-top: 8px; font-size: 14px; color: var(--danger); font-weight: 500; }
-.export-bar .btn.restart-link { flex: 1 1 100%; margin: 0; }
+/* 「最初からやり直す」は、押し間違えにくいようカードの右上の隅に小さく置く（親指の届きにくい場所） */
+.btn.restart-corner { min-height: 36px; padding: 0 8px; font-size: 13px; font-weight: 500; color: var(--danger); }
+.empty { position: relative; }
+#capture-restart { position: absolute; top: 8px; right: 8px; }
+.save-head-row { display: flex; justify-content: space-between; align-items: center; margin: -8px -8px 4px -10px; }
+.save-head-row .back { margin: 0; }
 /* 下のバーが出ているときは、ボタンに重ならないようバーの上に出す */
 body.has-bottom-bar .toast { bottom: calc(var(--bottom-bar, 0px) + 16px); }
 .toast.error { background: var(--danger); color: #fff; }
@@ -496,7 +502,7 @@ body.has-bottom-bar .app-version { bottom: calc(var(--bottom-bar, 0px) + 6px); }
       <button type="button" class="btn primary big detail-only" data-action="pick-files">ファイルを選ぶ</button>
       <button type="button" class="btn subtle easy-only" data-action="os-camera">端末のカメラアプリで撮る</button>
     </div>
-    <button type="button" class="btn subtle restart-link easy-only" data-action="restart" id="capture-restart" hidden>最初からやり直す（すべて削除）</button>
+    <button type="button" class="btn subtle restart-corner easy-only" data-action="restart" id="capture-restart" hidden>最初からやり直す</button>
     <p class="privacy">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
       ファイルは端末の外に出ません
@@ -526,7 +532,10 @@ body.has-bottom-bar .app-version { bottom: calc(var(--bottom-bar, 0px) + 6px); }
 <footer id="export-bar" class="export-bar" hidden>
   <div class="inner">
     <div class="save-head easy-only">
-      <button type="button" class="btn subtle back" data-action="back-to-confirm">‹ 確認に戻る</button>
+      <div class="save-head-row">
+        <button type="button" class="btn subtle back" data-action="back-to-confirm">‹ 確認に戻る</button>
+        <button type="button" class="btn subtle restart-corner" data-action="restart">最初からやり直す</button>
+      </div>
       <h2>保存する</h2>
       <p id="save-summary"></p>
     </div>
@@ -545,8 +554,8 @@ body.has-bottom-bar .app-version { bottom: calc(var(--bottom-bar, 0px) + 6px); }
         <option value="high">高画質</option>
       </select>
     </label>
-    <button type="button" class="btn primary" data-action="export">PDFを作成</button>
-    <button type="button" class="btn subtle restart-link easy-only" data-action="restart">最初からやり直す（すべて削除）</button>
+    <!-- かんたんモードでは、画面下のバー（親指で押しやすい場所）に「PDFを作成」を出す -->
+    <button type="button" class="btn primary detail-only" data-action="export">PDFを作成</button>
   </div>
 </footer>
 

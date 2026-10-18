@@ -1,6 +1,6 @@
 // このファイルは scripts/precache.js が自動で作ります。手で編集しないでください。
 self.RELAPDF_PRECACHE = {
-  "version": "e4595e13317f",
+  "version": "d1c2cf556227",
   "files": [
     "./",
     "./icons/apple-touch-icon.png",
