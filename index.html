@@ -297,6 +297,18 @@ body.has-bottom-bar .toast { bottom: calc(var(--bottom-bar, 0px) + 16px); }
   background: color-mix(in srgb, var(--accent-soft) 85%, transparent);
   font-size: 22px; font-weight: 700; color: var(--accent); pointer-events: none;
 }
+/* ---- 更新のお知らせ・ホーム画面への追加 ---- */
+.update-banner {
+  display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap;
+  padding: 8px 16px; background: var(--accent-soft); color: var(--text); font-weight: 600; font-size: 14px;
+  border-bottom: 1px solid var(--border);
+}
+.update-banner .btn { min-height: 36px; padding: 0 14px; }
+.btn.install-link { margin-top: 12px; font-size: 14px; color: var(--accent); }
+.install-steps { margin: 0 0 12px; padding-left: 1.4em; display: grid; gap: 10px; line-height: 1.7; }
+.install-steps .inline-icon { width: 20px; height: 20px; vertical-align: -4px; margin: 0 2px; color: var(--accent); }
+dialog .note { margin: 0 0 16px; font-size: 13px; color: var(--text-muted); }
+
 /* ---- 4点補正 ---- */
 .editor {
   position: fixed; inset: 0; z-index: 65; display: flex; flex-direction: column;
@@ -422,6 +434,11 @@ body.has-bottom-bar .app-version { bottom: calc(var(--bottom-bar, 0px) + 6px); }
   </div>
 </header>
 
+<div id="update-banner" class="update-banner" role="status" hidden>
+  <span>新しいバージョンがあります</span>
+  <button type="button" class="btn primary" data-action="apply-update">更新する</button>
+</div>
+
 <ol id="steps" class="steps easy-only" aria-label="手順">
   <li data-step="capture"><span class="num">1</span>撮る・選ぶ</li>
   <li data-step="confirm"><span class="num">2</span>確認</li>
@@ -444,6 +461,10 @@ body.has-bottom-bar .app-version { bottom: calc(var(--bottom-bar, 0px) + 6px); }
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
       ファイルは端末の外に出ません
     </p>
+    <button type="button" class="btn subtle install-link" data-action="install" hidden>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M12 7v7M9 11l3 3 3-3"/></svg>
+      ホーム画面に追加して、アプリとして使う
+    </button>
   </section>
 
   <section id="workspace" hidden>
@@ -549,6 +570,22 @@ body.has-bottom-bar .app-version { bottom: calc(var(--bottom-bar, 0px) + 6px); }
       <button type="button" class="btn" data-action="close-result">このまま編集を続ける</button>
       <button type="button" class="btn subtle" data-action="back-to-result">もう一度 送る・保存する</button>
     </div>
+  </div>
+</dialog>
+
+<dialog id="install-dialog" aria-labelledby="install-title">
+  <h2 id="install-title">ホーム画面に追加する</h2>
+  <p class="meta">ホーム画面のアイコンから開くと、ブラウザの枠が消えて、アプリのように使えます。</p>
+  <ol class="install-steps">
+    <li>画面の下（iPadは右上）にある<b>共有ボタン</b>
+      <svg class="inline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="共有ボタンのマーク"><path d="M12 3v12M8 7l4-4 4 4"/><path d="M5 11v8a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-8"/></svg>
+      を押す</li>
+    <li>メニューの中から<b>「ホーム画面に追加」</b>を選ぶ（見つからないときは、下にスクロール）</li>
+    <li>右上の<b>「追加」</b>を押す</li>
+  </ol>
+  <p class="note">※ ブラウザで作業中のページは、ホーム画面のアプリには引き継がれません。</p>
+  <div class="actions">
+    <button type="button" class="btn primary" data-action="close-install">わかりました</button>
   </div>
 </dialog>
 

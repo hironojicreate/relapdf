@@ -24,6 +24,8 @@ import { imageThumbnailUrl, loadImageFile, prepareImageForExport } from '../web/
 import { closePdf, pdfThumbnailUrl } from '../web/pdf-view.js';
 import { canShareFiles, downloadBlob, shareBlob } from '../web/save.js';
 import { currentMode, saveMode } from '../web/mode.js';
+import { setupUpdater } from '../web/updater.js';
+import { setupInstall } from '../web/install.js';
 import { createCameraView } from './camera-view.js';
 import { enableDragReorder } from './drag.js';
 import { createPerspectiveEditor } from './perspective-editor.js';
@@ -62,6 +64,9 @@ const els = {
   toast: $('#toast'),
   dropOverlay: $('#drop-overlay'),
   version: $('#app-version'),
+  updateBanner: $('#update-banner'),
+  installButtons: document.querySelectorAll('[data-action="install"]'),
+  installDialog: $('#install-dialog'),
 };
 
 const store = await createSourceStore();
@@ -152,7 +157,6 @@ async function restoreState() {
   if (PAPER_MODES.includes(state.paper)) els.paper.value = state.paper;
   if (QUALITY_PRESETS[state.quality]) els.quality.value = state.quality;
   easyStep = state.step === 'save' ? 'save' : 'confirm';
-  if (doc.pages.length > 0) toast('前回の続きから再開しました');
 }
 
 let persistRequested = false;
@@ -593,6 +597,15 @@ function onAction(action) {
     case 'new-document':
       startOver();
       break;
+    case 'apply-update':
+      applyUpdate();
+      break;
+    case 'install':
+      startInstall();
+      break;
+    case 'close-install':
+      els.installDialog.close();
+      break;
   }
 }
 
@@ -678,9 +691,77 @@ window.addEventListener('drop', (event) => {
 
 // ほかのアプリに切り替えるときは、待たずにすぐ保存する
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) saveStateNow();
+  if (!document.hidden) return;
+  saveStateNow();
+  // ほかのアプリに切り替えている間に、待っている更新を当てておく（戻ったときには新しいバージョン）
+  if (updater.ready && canReloadNow()) applyUpdate();
 });
 window.addEventListener('pagehide', () => saveStateNow());
+
+// ---- 自動アップデート ----
+
+const UPDATED_KEY = 'relapdf:updated';
+
+/** 今すぐ読み込み直しても、作業のじゃまにならないか（カメラ・補正画面・ダイアログ・処理中でない） */
+function canReloadNow() {
+  return (
+    !camera.isOpen() &&
+    !editor.isOpen() &&
+    !els.resultDialog.open &&
+    !els.installDialog.open &&
+    els.busy.hidden
+  );
+}
+
+const updater = setupUpdater({
+  onReady: () => {
+    // 作業中でなければすぐに、作業中なら案内を出して、切り替えるタイミングを選んでもらう
+    if (canReloadNow() && (doc.pages.length === 0 || document.hidden)) applyUpdate();
+    else els.updateBanner.hidden = false;
+  },
+  beforeReload: async () => {
+    await saveStateNow();
+    try {
+      sessionStorage.setItem(UPDATED_KEY, '1');
+    } catch {
+      // 保存できなくても更新はできる
+    }
+  },
+});
+
+function applyUpdate() {
+  els.updateBanner.hidden = true;
+  showBusy('新しいバージョンに更新中…');
+  updater.apply();
+}
+
+/** 更新で読み込み直した直後か（一度だけ true） */
+function justUpdated() {
+  try {
+    const flag = sessionStorage.getItem(UPDATED_KEY);
+    sessionStorage.removeItem(UPDATED_KEY);
+    return flag === '1';
+  } catch {
+    return false;
+  }
+}
+
+// ---- ホーム画面への追加 ----
+
+const install = setupInstall(showInstallButtons);
+
+function showInstallButtons(method) {
+  for (const button of els.installButtons) button.hidden = !(method === 'prompt' || method === 'ios');
+}
+
+async function startInstall() {
+  if (install.method === 'prompt') {
+    const outcome = await install.prompt();
+    if (outcome === 'accepted') toast('ホーム画面に追加しました');
+  } else {
+    els.installDialog.showModal();
+  }
+}
 
 // ---- 起動 ----
 
@@ -689,10 +770,10 @@ window.addEventListener('resize', placeVersion);
 
 await restoreState();
 applyMode(mode);
+showInstallButtons(install.method);
 
-if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-  navigator.serviceWorker.register('./sw.js').catch((error) => console.warn('Service Worker を登録できませんでした', error));
-}
+if (justUpdated()) toast(`最新版（v${APP_VERSION}）に更新しました`);
+else if (doc.pages.length > 0) toast('前回の続きから再開しました');
 
 // 画面テストから状態を確かめるための入り口（アプリの動作には使わない）
-window.__relapdf = { getDoc: () => doc, flushSave: () => saveStateNow() };
+window.__relapdf = { getDoc: () => doc, flushSave: () => saveStateNow(), checkForUpdate: () => updater.check() };
