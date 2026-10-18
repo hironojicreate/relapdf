@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { formatPageRange, parsePageRange } from '../../src/core/page-range.js';
+import { chunkPages, formatPageRange, parsePageRange, parsePageRangeGroups } from '../../src/core/page-range.js';
 
 test('単独のページと範囲を読み取る（1始まり→0始まり）', () => {
   assert.deepEqual(parsePageRange('1-3, 5', 10), [0, 1, 2, 4]);
@@ -35,4 +35,18 @@ test('ページ番号の配列を短い範囲の文字列にする', () => {
   assert.equal(formatPageRange([0, 1, 2, 4]), '1-3, 5');
   assert.equal(formatPageRange([4, 2, 3, 3]), '3-5');
   assert.equal(formatPageRange([]), '');
+});
+
+test('分割用：カンマで区切ったまとまりごとに分ける（まとめない）', () => {
+  assert.deepEqual(parsePageRangeGroups('1-3, 4-6, 8', 10), [[0, 1, 2], [3, 4, 5], [7]]);
+  assert.deepEqual(parsePageRangeGroups('５-, -２', 6), [[4, 5], [0, 1]]);
+  assert.throws(() => parsePageRangeGroups('', 6), /空/);
+  assert.throws(() => parsePageRangeGroups('1-9', 6), /外/);
+});
+
+test('分割用：決まったページ数ずつに分ける', () => {
+  assert.deepEqual(chunkPages(5, 2), [[0, 1], [2, 3], [4]]);
+  assert.deepEqual(chunkPages(3, 1), [[0], [1], [2]]);
+  assert.deepEqual(chunkPages(3, 10), [[0, 1, 2]]);
+  assert.throws(() => chunkPages(3, 0), /1以上/);
 });

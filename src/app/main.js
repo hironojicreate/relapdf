@@ -10,6 +10,7 @@ import {
   createDocument,
   deserializeDocument,
   movePages,
+  movePagesBefore,
   pruneSources,
   removePages,
   rotatePages,
@@ -30,6 +31,9 @@ import { createCameraView } from './camera-view.js';
 import { enableDragReorder } from './drag.js';
 import { createPerspectiveEditor } from './perspective-editor.js';
 import { createStepHistory } from './navigation.js';
+import { createToolsDialog } from './tools-dialog.js';
+import { createPreview } from './preview.js';
+import { renderPageImage } from '../web/page-image.js';
 import { APP_VERSION } from './version.js';
 
 const THUMB_SIZE = 360;
@@ -65,7 +69,11 @@ const els = {
   resultDialog: $('#result-dialog'),
   resultReady: $('#result-ready'),
   resultDone: $('#result-done'),
+  resultTitle: $('#result-title'),
   resultMeta: $('#result-meta'),
+  selectionCount: $('#selection-count'),
+  selectAllButton: $('#select-all'),
+  mergeHint: $('#merge-hint'),
   doneTitle: $('#done-title'),
   doneMeta: $('#done-meta'),
   shareButton: $('#share-button'),
@@ -85,13 +93,15 @@ const thumbnails = new Map(); // `${sourceId}:${pageIndex}` → Promise<string>�
 let doc = createDocument();
 let mode = currentMode();
 let easyStep = 'confirm'; // ページがあるときの、かんたんモードの段階（'capture' | 'confirm' | 'save'）
-let lastExport = null; // { blob, fileName }
+let lastExport = null; // { blob, fileName, title, summary }
+let selected = new Set(); // 詳細モードで選んでいるページのID
+let selectionAnchor = null; // Shift+クリックで範囲を選ぶときの起点
 
 // ---- 状態の更新 ----
 
 function update(next) {
-  // 「最初からやり直す」のあとに作業を始めたら、もう元に戻せないので片付ける
-  finalizeRestart();
+  // 削除や「最初からやり直す」のあとに別の作業を始めたら、もう元に戻せないので片付ける
+  finalizeUndo();
   const { doc: pruned, removedSourceIds } = pruneSources(next);
   for (const sourceId of removedSourceIds) forgetSource(sourceId);
   doc = pruned;
@@ -286,44 +296,64 @@ function openEditor(pageId) {
 
 // ---- 書き出し ----
 
+/** 書き出すファイル名の元（拡張子なし） */
+function baseFileName() {
+  return stripExtension(sanitizeFileName(els.fileName.value || els.fileName.placeholder));
+}
+
+/**
+ * ページリスト（またはその一部）をPDFにする。写真のページは用紙・画質の設定に合わせる。
+ * @param {(text: string) => void} [progress] 進み具合の表示
+ */
+async function buildPdf(target, title, progress = showBusy) {
+  const paper = els.paper.value;
+  const quality = els.quality.value;
+  const imageTotal = target.pages.filter((p) => p.content.type === 'image').length;
+  let imageDone = 0;
+  progress('PDFを作成中…');
+  return exportPdf(target, {
+    paper,
+    title,
+    getSourceBytes: (sourceId) => store.bytes(sourceId),
+    getImage: async (page) => {
+      imageDone += 1;
+      progress(`PDFを作成中… ${imageDone} / ${imageTotal}`);
+      return prepareImageForExport(await store.get(page.content.sourceId), {
+        quality,
+        paper,
+        perspective: page.perspective,
+      });
+    },
+  });
+}
+
 async function createPdf() {
   if (doc.pages.length === 0) return;
   const fileName = sanitizeFileName(els.fileName.value || els.fileName.placeholder);
-  const paper = els.paper.value;
-  const quality = els.quality.value;
-  const imageTotal = doc.pages.filter((p) => p.content.type === 'image').length;
-  let imageDone = 0;
-
-  showBusy('PDFを作成中…');
   try {
-    const bytes = await exportPdf(doc, {
-      paper,
-      title: stripExtension(fileName),
-      getSourceBytes: (sourceId) => store.bytes(sourceId),
-      getImage: async (page) => {
-        imageDone += 1;
-        showBusy(`PDFを作成中… ${imageDone} / ${imageTotal}`);
-        return prepareImageForExport(await store.get(page.content.sourceId), {
-          quality,
-          paper,
-          perspective: page.perspective,
-        });
-      },
+    const bytes = await buildPdf(doc, stripExtension(fileName));
+    deliver(new Blob([bytes], { type: 'application/pdf' }), fileName, {
+      title: 'PDFができました',
+      summary: `${doc.pages.length}ページ`,
     });
-    lastExport = { blob: new Blob([bytes], { type: 'application/pdf' }), fileName };
   } catch (error) {
     console.error(error);
     toast(`PDFを作成できませんでした：${error.message}`, 'error');
-    return;
   } finally {
     hideBusy();
   }
+}
+
+/** できたファイルを「送る・保存する」「ダウンロード」のダイアログで渡す */
+function deliver(blob, fileName, { title, summary }) {
+  lastExport = { blob, fileName, title, summary };
   showResult();
 }
 
 function showResult() {
-  const { blob, fileName } = lastExport;
-  els.resultMeta.textContent = `${fileName}（${doc.pages.length}ページ・${formatBytes(blob.size)}）`;
+  const { blob, fileName, title, summary } = lastExport;
+  els.resultTitle.textContent = title;
+  els.resultMeta.textContent = `${fileName}（${summary}・${formatBytes(blob.size)}）`;
   const shareable = canShareFiles();
   els.shareButton.hidden = !shareable;
   els.downloadButton.classList.toggle('primary', !shareable);
@@ -363,23 +393,39 @@ function downloadResult() {
 
 let undoState = null; // { doc, fileName, step, timer }
 
+/**
+ * ページリストを置き換え、数秒間「元に戻す」を出す（削除・最初からやり直す）。
+ * 端末に保存した写真などの中身は、元に戻せる時間が過ぎてから消す。
+ */
+function replaceWithUndo(next, message, { step, fileName } = {}) {
+  finalizeUndo();
+  undoState = { doc, fileName: els.fileName.value, step: easyStep, timer: setTimeout(finalizeUndo, UNDO_DURATION) };
+  doc = pruneSources(next).doc;
+  if (fileName !== undefined) els.fileName.value = fileName;
+  setStep(step ?? easyStep);
+  saveStateNow();
+  toast(message, 'info', { action: { label: '元に戻す', run: undoLast }, duration: UNDO_DURATION });
+}
+
 function restart(message = 'すべて削除しました') {
-  finalizeRestart();
   if (els.resultDialog.open) els.resultDialog.close();
   if (doc.pages.length === 0) {
+    finalizeUndo();
     setStep('capture');
     return;
   }
-  // 端末に保存した写真は、元に戻せる時間が過ぎてから消す
-  undoState = { doc, fileName: els.fileName.value, step: easyStep, timer: setTimeout(finalizeRestart, UNDO_DURATION) };
-  doc = createDocument();
-  els.fileName.value = '';
-  setStep('capture');
-  saveStateNow();
-  toast(message, 'info', { action: { label: '元に戻す', run: undoRestart }, duration: UNDO_DURATION });
+  selected.clear();
+  replaceWithUndo(createDocument(), message, { step: 'capture', fileName: '' });
 }
 
-function undoRestart() {
+/** ページを削除する（数秒間は元に戻せる） */
+function deletePages(pageIds) {
+  if (pageIds.length === 0) return;
+  for (const id of pageIds) selected.delete(id);
+  replaceWithUndo(removePages(doc, pageIds), `${pageIds.length}ページを削除しました`);
+}
+
+function undoLast() {
   if (!undoState) return;
   clearTimeout(undoState.timer);
   const { doc: previous, fileName, step } = undoState;
@@ -391,7 +437,7 @@ function undoRestart() {
   toast('元に戻しました');
 }
 
-function finalizeRestart() {
+function finalizeUndo() {
   if (!undoState) return;
   clearTimeout(undoState.timer);
   const previous = undoState.doc;
@@ -449,6 +495,11 @@ function render() {
     item.disabled = count === 0 && item.dataset.step !== 'capture';
   }
 
+  // 選んでいるページ（詳細モード）：なくなったページは外す
+  for (const id of selected) if (!doc.pages.some((p) => p.id === id)) selected.delete(id);
+  renderSelectionBar(count);
+  els.mergeHint.hidden = !Object.values(doc.sources).some((source) => source.kind === 'pdf');
+
   const cards = doc.pages.map((page, index) => renderCard(page, index, count));
   els.grid.replaceChildren(...cards);
   placeVersion();
@@ -465,6 +516,56 @@ function placeVersion() {
   document.documentElement.style.setProperty('--bottom-bar', `${bar ? bar.offsetHeight : 0}px`);
 }
 
+function renderSelectionBar(count) {
+  const n = selected.size;
+  els.selectionCount.textContent =
+    n === 0 ? 'クリックで選択（Shift・Ctrl で複数）、ダブルクリックで拡大' : `${n} / ${count} ページを選択中`;
+  els.selectAllButton.textContent = n === count && count > 0 ? '選択を解除' : 'すべて選択';
+  for (const button of document.querySelectorAll('[data-needs-selection]')) button.disabled = n === 0;
+}
+
+/**
+ * 選択の見た目だけを更新する（ページの一覧は描き直さない）。
+ * 描き直すとダブルクリックが届かなくなるため、選ぶ操作ではこちらを使う。
+ */
+function refreshSelection() {
+  for (const card of els.grid.querySelectorAll('.page-card')) {
+    const on = mode === 'detail' && selected.has(card.dataset.id);
+    card.classList.toggle('selected', on);
+    card.setAttribute('aria-selected', String(on));
+    card.querySelector('.select-box')?.setAttribute('aria-pressed', String(on));
+  }
+  renderSelectionBar(doc.pages.length);
+}
+
+/** 選んでいるページのID（並び順） */
+function selectedIds() {
+  return doc.pages.filter((p) => selected.has(p.id)).map((p) => p.id);
+}
+
+/** クリックでページを選ぶ（詳細モード）。Shift で範囲、Ctrl/⌘ で追加・解除 */
+function selectByClick(pageId, { shift, toggle }) {
+  const ids = doc.pages.map((p) => p.id);
+  if (shift && selectionAnchor && ids.includes(selectionAnchor)) {
+    const [a, b] = [ids.indexOf(selectionAnchor), ids.indexOf(pageId)].sort((x, y) => x - y);
+    if (!toggle) selected.clear();
+    for (const id of ids.slice(a, b + 1)) selected.add(id);
+  } else if (toggle) {
+    if (selected.has(pageId)) selected.delete(pageId);
+    else selected.add(pageId);
+    selectionAnchor = pageId;
+  } else {
+    selected = new Set([pageId]);
+    selectionAnchor = pageId;
+  }
+  refreshSelection();
+}
+
+function selectAllToggle() {
+  selected = selected.size === doc.pages.length ? new Set() : new Set(doc.pages.map((p) => p.id));
+  refreshSelection();
+}
+
 function suggestedFileName() {
   const sources = Object.values(doc.sources);
   if (sources.length === 1 && sources[0].kind === 'pdf') return stripExtension(sources[0].name);
@@ -475,6 +576,9 @@ function renderCard(page, index, count) {
   const li = document.createElement('li');
   li.className = 'page-card';
   li.dataset.id = page.id;
+  const isSelected = mode === 'detail' && selected.has(page.id);
+  li.classList.toggle('selected', isSelected);
+  li.setAttribute('aria-selected', String(isSelected));
 
   const thumb = document.createElement('div');
   thumb.className = 'thumb';
@@ -498,7 +602,8 @@ function renderCard(page, index, count) {
     const spinner = document.createElement('div');
     spinner.className = 'spinner';
     thumb.append(spinner, img);
-    if (content.type === 'image') {
+    // かんたんモードでは、写真をタップすると4点補正（詳細モードでは、クリックで選択・ダブルクリックで拡大）
+    if (content.type === 'image' && mode === 'easy') {
       thumb.classList.add('clickable');
       thumb.dataset.op = 'perspective';
       thumb.title = 'タップして4点補正';
@@ -539,6 +644,16 @@ function renderCard(page, index, count) {
     iconButton('move-right', '後ろへ移動', ICONS.right, index === count - 1, 'detail-only'),
     iconButton('delete', '削除', ICONS.trash, false, 'danger'),
   );
+
+  // 詳細モード：タッチ操作でも選べるよう、選択の丸を置く
+  const check = document.createElement('button');
+  check.type = 'button';
+  check.className = 'select-box detail-only';
+  check.dataset.op = 'select';
+  check.setAttribute('aria-label', `${index + 1}ページ目を選ぶ`);
+  check.setAttribute('aria-pressed', String(isSelected));
+  check.innerHTML = ICONS.check;
+  thumb.append(check);
 
   li.append(thumb, label, actions);
   return li;
@@ -584,6 +699,7 @@ const ICONS = {
   rotate: svg('<path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/>'),
   trash: svg('<path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 13h10l1-13"/><path d="M9 7V4h6v3"/>'),
   perspective: svg('<path d="M6 5l13 2-1 12-13-2z"/><circle cx="6" cy="5" r="1.6" fill="currentColor"/><circle cx="19" cy="7" r="1.6" fill="currentColor"/><circle cx="18" cy="19" r="1.6" fill="currentColor"/><circle cx="5" cy="17" r="1.6" fill="currentColor"/>'),
+  check: svg('<path d="M5 12.5l4.5 4.5L19 7.5"/>'),
   grip: svg('<circle cx="9" cy="6" r="1.2"/><circle cx="15" cy="6" r="1.2"/><circle cx="9" cy="12" r="1.2"/><circle cx="15" cy="12" r="1.2"/><circle cx="9" cy="18" r="1.2"/><circle cx="15" cy="18" r="1.2"/>'),
 };
 
@@ -646,6 +762,24 @@ function goToStep(step) {
   saveStateSoon();
 }
 
+// ---- 詳細モードの道具・プレビュー ----
+
+const tools = createToolsDialog({
+  getDoc: () => doc,
+  getSelectedIndexes: () => doc.pages.map((p, i) => (selected.has(p.id) ? i : -1)).filter((i) => i >= 0),
+  getBaseName: baseFileName,
+  buildPdf,
+  renderImage: (page, options) => renderPageImage(page, store, options),
+  deliver,
+  busy: (text) => (text ? showBusy(text) : hideBusy()),
+  onError: (message) => toast(message, 'error'),
+});
+
+const preview = createPreview({
+  getDoc: () => doc,
+  renderPreview: (page, maxSide) => renderPageImage(page, store, { maxSide, format: 'jpeg' }),
+});
+
 /** スマホの「戻る」で閉じられる画面（カメラ・補正画面・ダイアログ）が開いていれば閉じる */
 function closeOverlay() {
   if (editor.isOpen()) {
@@ -656,7 +790,7 @@ function closeOverlay() {
     camera.finish();
     return true;
   }
-  for (const dialog of [els.resultDialog, els.installDialog]) {
+  for (const dialog of document.querySelectorAll('dialog[open]')) {
     if (dialog.open) {
       dialog.close();
       return true;
@@ -720,6 +854,24 @@ function onAction(action) {
     case 'new-document':
       restart('新しく作り始めます');
       break;
+    case 'select-all':
+      selectAllToggle();
+      break;
+    case 'rotate-selected':
+      if (selected.size > 0) update(rotatePages(doc, selectedIds(), 90));
+      break;
+    case 'delete-selected':
+      deletePages(selectedIds());
+      break;
+    case 'open-extract':
+      tools.open('extract');
+      break;
+    case 'open-split':
+      tools.open('split');
+      break;
+    case 'open-images':
+      tools.open('images');
+      break;
     case 'apply-update':
       applyUpdate();
       break;
@@ -746,8 +898,11 @@ function onPageOp(op, pageId) {
       update(movePages(doc, [pageId], index + 1));
       break;
     case 'delete':
-      update(removePages(doc, [pageId]));
+      deletePages([pageId]);
       break;
+    case 'select':
+      selectByClick(pageId, { shift: false, toggle: true });
+      return;
     case 'perspective':
       openEditor(pageId);
       return;
@@ -787,7 +942,52 @@ document.addEventListener('click', (event) => {
   if (opTarget) onPageOp(opTarget.dataset.op, opTarget.closest('[data-id]').dataset.id);
 });
 
-enableDragReorder(els.grid, (pageId, toIndex) => update(movePages(doc, [pageId], toIndex)));
+// 選んだページのうちの1枚をドラッグしたときは、選んだページをまとめて動かす
+enableDragReorder(els.grid, (pageId, insertBefore) => {
+  const ids = mode === 'detail' && selected.has(pageId) && selected.size > 1 ? selectedIds() : [pageId];
+  update(movePagesBefore(doc, ids, insertBefore));
+});
+
+// 詳細モード：ページのクリックで選ぶ、ダブルクリックで大きく見る
+els.grid.addEventListener('click', (event) => {
+  if (mode !== 'detail' || event.target.closest('button')) return;
+  const card = event.target.closest('.page-card');
+  if (card) selectByClick(card.dataset.id, { shift: event.shiftKey, toggle: event.ctrlKey || event.metaKey });
+});
+els.grid.addEventListener('dblclick', (event) => {
+  if (mode !== 'detail' || event.target.closest('button')) return;
+  const card = event.target.closest('.page-card');
+  if (card) preview.open(card.dataset.id);
+});
+// ページ以外の場所をクリックしたら、選択を外す
+els.workspace.addEventListener('click', (event) => {
+  if (mode === 'detail' && selected.size > 0 && !event.target.closest('.page-card, button, input, select, label')) {
+    selected.clear();
+    refreshSelection();
+  }
+});
+
+// 詳細モードのキーボード操作：Ctrl/⌘+A すべて選択、Delete 削除、Esc 選択を外す、Ctrl/⌘+Z 元に戻す
+document.addEventListener('keydown', (event) => {
+  if (mode !== 'detail' || document.querySelector('dialog[open]') || camera.isOpen() || editor.isOpen()) return;
+  if (event.target.closest?.('input, select, textarea')) return;
+  const mod = event.ctrlKey || event.metaKey;
+  if (mod && event.key.toLowerCase() === 'a' && doc.pages.length > 0) {
+    event.preventDefault();
+    selected = new Set(doc.pages.map((p) => p.id));
+    refreshSelection();
+  } else if ((event.key === 'Delete' || event.key === 'Backspace') && selected.size > 0) {
+    event.preventDefault();
+    deletePages(selectedIds());
+  } else if (event.key === 'Escape' && selected.size > 0) {
+    selected.clear();
+    refreshSelection();
+  } else if (mod && event.key.toLowerCase() === 'z' && undoState) {
+    event.preventDefault();
+    hideToast();
+    undoLast();
+  }
+});
 
 for (const input of [els.inputPhotos, els.inputCamera, els.inputFiles]) {
   input.addEventListener('change', () => {
@@ -842,8 +1042,7 @@ function canReloadNow() {
   return (
     !camera.isOpen() &&
     !editor.isOpen() &&
-    !els.resultDialog.open &&
-    !els.installDialog.open &&
+    !document.querySelector('dialog[open]') &&
     els.busy.hidden
   );
 }

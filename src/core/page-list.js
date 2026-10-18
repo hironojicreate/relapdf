@@ -158,6 +158,20 @@ export function movePages(doc, pageIds, toIndex) {
   return { ...doc, pages: rest };
 }
 
+/**
+ * 選んだページをまとめて、insertBefore 番目のページの前に移動する（ドラッグで離した位置）。
+ * insertBefore は今の並びでの位置（0〜ページ数）。選んだページ同士の順番は保つ。
+ */
+export function movePagesBefore(doc, pageIds, insertBefore) {
+  const ids = toIdSet(doc, pageIds);
+  if (!Number.isInteger(insertBefore) || insertBefore < 0 || insertBefore > doc.pages.length) {
+    throw new Error(`移動先が範囲外です: ${insertBefore}`);
+  }
+  // 移動するページを取り除いた並びで、何番目に入れるか
+  const to = doc.pages.slice(0, insertBefore).filter((p) => !ids.has(p.id)).length;
+  return movePages(doc, [...ids], to);
+}
+
 /** ページを削除する。使われなくなった元データは pruneSources で片付ける */
 export function removePages(doc, pageIds) {
   const ids = toIdSet(doc, pageIds);

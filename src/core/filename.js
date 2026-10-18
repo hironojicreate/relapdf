@@ -25,6 +25,15 @@ export function sanitizeFileName(name, extension = '.pdf', fallback = defaultFil
   return `${base}${extension}`;
 }
 
+/**
+ * 連番のファイル名。桁数は全体の数に合わせてそろえる。
+ * 例：numberedName('見積書', 3, 12, '.jpg') → '見積書_03.jpg'
+ */
+export function numberedName(base, number, total, extension) {
+  const digits = Math.max(2, String(total).length);
+  return `${base}_${String(number).padStart(digits, '0')}${extension}`;
+}
+
 /** ファイル名から拡張子を除いた部分を返す。例："見積書.pdf" → "見積書" */
 export function stripExtension(name) {
   const text = String(name ?? '');

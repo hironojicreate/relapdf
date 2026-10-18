@@ -167,3 +167,46 @@ export async function imageThumbnailUrl(blob, maxSide, perspective = null) {
     decoded.close();
   }
 }
+
+/**
+ * 画像のページを、1枚の画像ファイルにする（PDF→画像の書き出し用）。
+ * 4点補正とユーザーの回転をかける。大きさは元データのまま（長辺は元データの上限まで）。
+ * @param {{ perspective?: object|null, rotation?: number, type?: string, quality?: number, maxSide?: number }} options
+ */
+export async function renderImagePage(blob, { perspective = null, rotation = 0, type = 'image/jpeg', quality = 0.92, maxSide } = {}) {
+  let source = blob;
+  if (perspective) {
+    const decoded = await decodeImage(blob);
+    try {
+      const size = correctedSize(decoded, perspective);
+      source = await encodeCorrected(decoded, perspective, size.width, size.height, 0.95);
+    } finally {
+      decoded.close();
+    }
+  }
+  const decoded = await decodeImage(source);
+  try {
+    const size = maxSide ? fitLongSide(decoded.width, decoded.height, maxSide) : { width: decoded.width, height: decoded.height };
+    const sideways = rotation === 90 || rotation === 270;
+    const canvas = document.createElement('canvas');
+    canvas.width = sideways ? size.height : size.width;
+    canvas.height = sideways ? size.width : size.height;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.imageSmoothingQuality = 'high';
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    ctx.rotate((rotation * Math.PI) / 180);
+    ctx.drawImage(decoded.source, -size.width / 2, -size.height / 2, size.width, size.height);
+    try {
+      return await new Promise((resolve, reject) =>
+        canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('画像を作れませんでした'))), type, quality),
+      );
+    } finally {
+      canvas.width = 0;
+      canvas.height = 0;
+    }
+  } finally {
+    decoded.close();
+  }
+}

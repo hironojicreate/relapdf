@@ -6,6 +6,7 @@ CDNは使わず、ここに置いたファイルだけを読み込みます（�
 | フォルダ | ライブラリ | バージョン | ライセンス | 元のファイル |
 |---|---|---|---|---|
 | `pdf-lib/` | [pdf-lib](https://github.com/Hopding/pdf-lib) | 1.17.1 | MIT（`pdf-lib/LICENSE.md`） | `dist/pdf-lib.esm.min.js` |
+| `fflate/` | [fflate](https://github.com/101arrowz/fflate) | 0.8.3 | MIT（`fflate/LICENSE`） | `esm/browser.js` → `fflate.mjs` |
 | `pdfjs/` | [PDF.js](https://github.com/mozilla/pdf.js)（pdfjs-dist） | 6.4.299 | Apache 2.0（`pdfjs/LICENSE`） | `legacy/build/pdf.min.mjs`、`legacy/build/pdf.worker.min.mjs`、`cmaps/`、`standard_fonts/`、`iccs/`、`wasm/` |
 
 ## PDF.js について

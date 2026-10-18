@@ -330,6 +330,65 @@ body.has-bottom-bar .toast { bottom: calc(var(--bottom-bar, 0px) + 16px); }
 .install-steps .inline-icon { width: 20px; height: 20px; vertical-align: -4px; margin: 0 2px; color: var(--accent); }
 dialog .note { margin: 0 0 16px; font-size: 13px; color: var(--text-muted); }
 
+/* ---- 詳細モード：選択と道具 ---- */
+.selection-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin: -4px 0 14px;
+  padding: 8px 10px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border);
+}
+.selection-bar .btn { min-height: 38px; padding: 0 12px; font-size: 14px; }
+.selection-bar .btn svg { width: 18px; height: 18px; }
+.selection-count { font-size: 13px; color: var(--text-muted); margin-right: auto; }
+.tool-group { display: inline-flex; gap: 6px; }
+.btn.danger-text { color: var(--danger); }
+.page-card { position: relative; }
+.page-card.selected { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent); }
+.page-card.selected .thumb { background: var(--accent-soft); }
+.select-box {
+  position: absolute; top: 8px; right: 8px; z-index: 2; width: 28px; height: 28px; padding: 0;
+  display: grid; place-items: center; border-radius: 50%; cursor: pointer;
+  border: 2px solid color-mix(in srgb, var(--text-muted) 60%, transparent); background: rgba(255, 255, 255, .85); color: transparent;
+}
+.select-box svg { width: 18px; height: 18px; }
+.select-box[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.page-card.dragging[data-drag-count]::after {
+  content: attr(data-drag-count) "ページ"; position: absolute; top: -10px; right: -10px; z-index: 3;
+  padding: 2px 10px; border-radius: 999px; background: var(--accent); color: var(--accent-text); font-size: 12px; font-weight: 700;
+}
+body.mode-detail .page-card { cursor: default; user-select: none; -webkit-user-select: none; }
+.hint { flex: 1 1 100%; margin: 0; font-size: 12px; color: var(--text-muted); order: 10; }
+.tool-dialog { width: min(480px, calc(100vw - 32px)); }
+.tool-dialog form { display: grid; gap: 14px; }
+.tool-dialog h2, .tool-dialog .meta { margin-bottom: 0; }
+.tool-dialog .field input, .tool-dialog .field select { width: 100%; }
+.field-row { display: flex; gap: 12px; flex-wrap: wrap; }
+.field-row .field { flex: 1 1 160px; }
+.choices { border: 0; padding: 0; margin: 0; display: grid; gap: 8px; }
+.choices legend { font-size: 12px; color: var(--text-muted); margin-bottom: 4px; }
+.choice { display: flex; align-items: center; gap: 8px; min-height: 36px; }
+.choice-input, .inline-number {
+  min-height: 40px; padding: 0 10px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 16px;
+}
+.choice-input { margin-left: 28px; }
+.inline-number { width: 72px; }
+.form-error { margin: 0; min-height: 1em; color: var(--danger); font-size: 14px; }
+dialog .actions.row { flex-direction: row; justify-content: flex-end; }
+.preview-dialog {
+  width: min(1100px, calc(100vw - 24px)); height: min(92vh, 1100px); max-width: none; max-height: none; padding: 0;
+  display: none; flex-direction: column; background: #1b1f27; color: #e8ecf2;
+}
+.preview-dialog[open] { display: flex; }
+.preview-top { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; }
+.preview-top .btn.subtle { color: #c5cdd9; }
+.preview-stage { position: relative; flex: 1; min-height: 0; display: flex; align-items: center; gap: 8px; padding: 0 8px 12px; }
+.preview-stage img { flex: 1; min-width: 0; height: 100%; object-fit: contain; }
+.preview-nav {
+  flex: none; width: 48px; height: 72px; border: 0; border-radius: 12px; background: rgba(255, 255, 255, .08);
+  color: #fff; font-size: 34px; cursor: pointer;
+}
+.preview-nav:disabled { opacity: .25; cursor: default; }
+.preview-spinner { position: absolute; inset: 0; margin: auto; display: none; }
+.preview-dialog.loading .preview-spinner { display: block; }
+
 /* ---- 4点補正 ---- */
 .editor {
   position: fixed; inset: 0; z-index: 65; display: flex; flex-direction: column;
@@ -521,7 +580,20 @@ body.has-bottom-bar .app-version { bottom: calc(var(--bottom-bar, 0px) + 6px); }
       <button type="button" class="btn easy-only" data-action="pick-photos">選ぶ</button>
       <button type="button" class="btn detail-only" data-action="pick-files">ファイルを追加</button>
     </div>
-    <ol id="page-grid" class="page-grid" aria-label="ページの一覧"></ol>
+    <div class="selection-bar detail-only" role="toolbar" aria-label="ページの操作">
+      <button type="button" class="btn" data-action="select-all" id="select-all">すべて選択</button>
+      <span class="selection-count" id="selection-count" aria-live="polite"></span>
+      <span class="tool-group">
+        <button type="button" class="btn" data-action="rotate-selected" data-needs-selection title="選んだページを右に回転"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>回転</button>
+        <button type="button" class="btn danger-text" data-action="delete-selected" data-needs-selection title="選んだページを削除（Delete）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 13h10l1-13"/><path d="M9 7V4h6v3"/></svg>削除</button>
+      </span>
+      <span class="tool-group">
+        <button type="button" class="btn" data-action="open-extract" title="指定したページだけで新しいPDFを作る"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M12 11v6M9 14l3 3 3-3"/></svg>取り出す</button>
+        <button type="button" class="btn" data-action="open-split" title="いくつかのPDFに分ける"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12M6 21h12"/><path d="M12 3v7M12 14v7"/><path d="M4 12h16"/></svg>分割</button>
+        <button type="button" class="btn" data-action="open-images" title="ページを画像（JPEG・PNG）にする"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/></svg>画像にする</button>
+      </span>
+    </div>
+    <ol id="page-grid" class="page-grid" aria-label="ページの一覧" aria-multiselectable="true"></ol>
   </section>
 </main>
 
@@ -554,6 +626,7 @@ body.has-bottom-bar .app-version { bottom: calc(var(--bottom-bar, 0px) + 6px); }
         <option value="high">高画質</option>
       </select>
     </label>
+    <p class="hint detail-only" id="merge-hint" hidden>※ PDFのしおり（目次）やリンクは引き継がれません</p>
     <!-- かんたんモードでは、画面下のバー（親指で押しやすい場所）に「PDFを作成」を出す -->
     <button type="button" class="btn primary detail-only" data-action="export">PDFを作成</button>
   </div>
@@ -631,6 +704,65 @@ body.has-bottom-bar .app-version { bottom: calc(var(--bottom-bar, 0px) + 6px); }
       <button type="button" class="btn" data-action="close-result">このまま編集を続ける</button>
       <button type="button" class="btn subtle" data-action="back-to-result">もう一度 送る・保存する</button>
     </div>
+  </div>
+</dialog>
+
+<dialog id="tool-dialog" class="tool-dialog" aria-labelledby="tool-title">
+  <form id="tool-form" novalidate>
+    <h2 id="tool-title"></h2>
+    <p class="meta" id="tool-desc"></p>
+    <section data-tool="extract">
+      <label class="field">取り出すページ（例：1-3, 5）
+        <input id="extract-range" type="text" inputmode="numeric" autocomplete="off">
+      </label>
+    </section>
+    <section data-tool="split">
+      <fieldset class="choices">
+        <legend>分け方</legend>
+        <label class="choice"><input type="radio" name="split-mode" value="ranges" checked>
+          <span>ページ範囲ごと（区切りはカンマ）</span></label>
+        <input id="split-ranges" class="choice-input" type="text" inputmode="numeric" autocomplete="off" aria-label="分けるページ範囲">
+        <label class="choice"><input type="radio" name="split-mode" value="every">
+          <span><input id="split-every" class="inline-number" type="number" min="1" value="1" aria-label="何ページずつ"> ページずつ</span></label>
+      </fieldset>
+    </section>
+    <section data-tool="images">
+      <label class="field">画像にするページ（例：1-3, 5）
+        <input id="images-range" type="text" inputmode="numeric" autocomplete="off">
+      </label>
+      <div class="field-row">
+        <label class="field">形式
+          <select id="images-format">
+            <option value="jpeg">JPEG（写真向き）</option>
+            <option value="png">PNG（文字向き）</option>
+          </select>
+        </label>
+        <label class="field">解像度（PDFのページ）
+          <select id="images-dpi">
+            <option value="150">標準（150dpi）</option>
+            <option value="300">高画質（300dpi）</option>
+          </select>
+        </label>
+      </div>
+    </section>
+    <p class="form-error" id="tool-error" role="alert"></p>
+    <div class="actions row">
+      <button type="button" class="btn subtle" data-action="close-tool">キャンセル</button>
+      <button type="submit" class="btn primary" id="tool-submit">作成</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="preview-dialog" class="preview-dialog" aria-label="ページのプレビュー">
+  <div class="preview-top">
+    <span id="preview-label"></span>
+    <button type="button" class="btn subtle" data-preview="close">閉じる</button>
+  </div>
+  <div class="preview-stage">
+    <button type="button" class="preview-nav" id="preview-prev" data-preview="prev" aria-label="前のページ">‹</button>
+    <img id="preview-img" alt="">
+    <div class="spinner preview-spinner"></div>
+    <button type="button" class="preview-nav" id="preview-next" data-preview="next" aria-label="次のページ">›</button>
   </div>
 </dialog>
 

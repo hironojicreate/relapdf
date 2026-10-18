@@ -57,16 +57,23 @@ export async function closePdf(sourceId) {
 }
 
 /**
- * PDFの1ページをサムネイルにして、表示用のURLを返す。
- * PDFにもともと付いている回転は反映する（ユーザーの回転は画面側で付ける）。
+ * PDFの1ページを画像（Blob）にする。
+ * @param {object} options
+ * @param {number} [options.scale] 拡大率（1 = 72dpi）。maxSide を指定したときは、長辺がその大きさになるように決める
+ * @param {number} [options.maxSide]
+ * @param {number} [options.extraRotation] PDFにもともと付いている回転に足す回転（ユーザーの回転）
+ * @param {string} [options.type] 'image/jpeg' | 'image/png'
+ * @param {number} [options.quality] JPEGの画質
  */
-export async function pdfThumbnailUrl(sourceId, getBytes, pageIndex, maxSide) {
+export async function renderPdfPage(sourceId, getBytes, pageIndex, options = {}) {
+  const { maxSide, extraRotation = 0, type = 'image/jpeg', quality = 0.9 } = options;
   const pdf = await openPdf(sourceId, getBytes);
   const page = await pdf.getPage(pageIndex + 1);
   try {
-    const base = page.getViewport({ scale: 1 });
-    const size = fitLongSide(base.width, base.height, maxSide);
-    const viewport = page.getViewport({ scale: size.width / base.width });
+    const rotation = (((page.rotate + extraRotation) % 360) + 360) % 360;
+    const base = page.getViewport({ scale: 1, rotation });
+    const scale = maxSide ? fitLongSide(base.width, base.height, maxSide).width / base.width : (options.scale ?? 1);
+    const viewport = page.getViewport({ scale, rotation });
     const canvas = document.createElement('canvas');
     canvas.width = Math.max(1, Math.round(viewport.width));
     canvas.height = Math.max(1, Math.round(viewport.height));
@@ -74,11 +81,22 @@ export async function pdfThumbnailUrl(sourceId, getBytes, pageIndex, maxSide) {
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     await page.render({ canvas, canvasContext: ctx, viewport }).promise;
-    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.8));
+    const blob = await new Promise((resolve, reject) =>
+      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('画像を作れませんでした'))), type, quality),
+    );
     canvas.width = 0;
     canvas.height = 0;
-    return URL.createObjectURL(blob);
+    return blob;
   } finally {
     page.cleanup();
   }
+}
+
+/**
+ * PDFの1ページをサムネイルにして、表示用のURLを返す。
+ * PDFにもともと付いている回転は反映する（ユーザーの回転は画面側で付ける）。
+ */
+export async function pdfThumbnailUrl(sourceId, getBytes, pageIndex, maxSide) {
+  const blob = await renderPdfPage(sourceId, getBytes, pageIndex, { maxSide, quality: 0.8 });
+  return URL.createObjectURL(blob);
 }

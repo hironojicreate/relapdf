@@ -40,6 +40,29 @@ export function parsePageRange(text, pageCount) {
   return [...result].sort((a, b) => a - b);
 }
 
+/**
+ * 分割用：カンマで区切ったまとまりごとに、0始まりのページ番号の配列を返す（まとめない）。
+ * 例："1-3, 4-6, 8" → [[0,1,2], [3,4,5], [7]]
+ */
+export function parsePageRangeGroups(text, pageCount) {
+  const normalized = toHalfWidth(String(text)).trim().replace(/\s*-\s*/g, '-');
+  if (normalized === '') throw new Error('ページ範囲が空です');
+  return normalized
+    .split(/[,、\s]+/)
+    .filter(Boolean)
+    .map((part) => parsePageRange(part, pageCount));
+}
+
+/** 分割用：size ページずつのまとまりにする。例：(5, 2) → [[0,1], [2,3], [4]] */
+export function chunkPages(pageCount, size) {
+  if (!Number.isInteger(size) || size < 1) throw new Error('何ページずつに分けるかを、1以上の数で指定してください');
+  const groups = [];
+  for (let start = 0; start < pageCount; start += size) {
+    groups.push(Array.from({ length: Math.min(size, pageCount - start) }, (_, i) => start + i));
+  }
+  return groups;
+}
+
 /** 0始まりのページ番号の配列を、短い範囲の文字列（1始まり）にする。例：[0,1,2,4] → "1-3, 5" */
 export function formatPageRange(indexes) {
   const sorted = [...new Set(indexes)].sort((a, b) => a - b);

@@ -7,7 +7,7 @@
 
 単一HTMLのPWAとして作り、オフラインでも動きます。
 
-> 開発中です（現在 M3：4点補正 まで）。進み具合は [docs/handover.md](docs/handover.md) を見てください。
+> 開発中です（現在 M4：詳細モード 第1段階 まで）。進み具合は [docs/handover.md](docs/handover.md) を見てください。
 
 ## ドキュメント
 
@@ -28,7 +28,7 @@ precache-manifest.js    キャッシュするファイルの一覧（自動生�
 src/core/               Core層：ページリストの操作やPDF生成。画面に触らない
 src/web/                ブラウザ側の部品：画像の読み込み、PDFの表示、保存、カメラ、端末内への保存
 src/app/                画面の動き
-vendor/                 同梱ライブラリ（pdf-lib、PDF.js）
+vendor/                 同梱ライブラリ（pdf-lib、PDF.js、fflate）
 icons/                  アイコン
 scripts/                開発用の道具（キャッシュ一覧・アイコンの作成）
 tests/                  テスト（core・web・tools は Node.js、e2e は Playwright）

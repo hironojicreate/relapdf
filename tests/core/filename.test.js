@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { defaultFileName, sanitizeFileName, stripExtension } from '../../src/core/filename.js';
+import { defaultFileName, numberedName, sanitizeFileName, stripExtension } from '../../src/core/filename.js';
 
 test('初期のファイル名は日時入り', () => {
   assert.equal(defaultFileName(new Date(2026, 9, 18, 9, 5)), 'RelaPDF_20261018_0905.pdf');
@@ -20,4 +20,10 @@ test('拡張子を除く', () => {
   assert.equal(stripExtension('archive.tar.gz'), 'archive.tar');
   assert.equal(stripExtension('.hidden'), '.hidden');
   assert.equal(stripExtension('noext'), 'noext');
+});
+
+test('連番のファイル名は、全体の数に合わせて桁をそろえる', () => {
+  assert.equal(numberedName('見積書', 3, 12, '.jpg'), '見積書_03.jpg');
+  assert.equal(numberedName('scan', 7, 120, '.png'), 'scan_007.png');
+  assert.equal(numberedName('a', 1, 1, '.pdf'), 'a_01.pdf');
 });

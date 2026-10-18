@@ -3,6 +3,7 @@
 // - スマホ：各ページのつまみ（data-drag-handle）を押さえて動かす
 // - PC：マウスでページの絵をつかんで動かす
 // 指を離した位置に、ページを移動する。画面の端に近づくと自動でスクロールする。
+// 選んだページが複数あるとき（詳細モード）に、そのうちの1枚をつかむと、選んだページをまとめて動かす。
 
 import { insertionIndexAt, moveTargetIndex } from '../web/reorder.js';
 
@@ -11,9 +12,10 @@ const EDGE = 80; // 画面の上下の端からこの距離に入ったら自動
 
 /**
  * @param {HTMLElement} grid ページの一覧
- * @param {(pageId: string, toIndex: number) => void} onMove
+ * @param {(pageId: string, insertBefore: number) => void} onDrop
+ *   離したとき。insertBefore は「今の並びで、何番目のページの前に入れるか」（0〜ページ数）
  */
-export function enableDragReorder(grid, onMove) {
+export function enableDragReorder(grid, onDrop) {
   let state = null;
 
   grid.addEventListener('pointerdown', (event) => {
@@ -45,6 +47,10 @@ export function enableDragReorder(grid, onMove) {
     const list = cards();
     state.started = true;
     state.fromIndex = list.indexOf(state.card);
+    // 選んだページのうちの1枚をつかんだときは、まとめて動かす
+    const selectedCount = state.card.classList.contains('selected') ? grid.querySelectorAll('.page-card.selected').length : 1;
+    state.multi = selectedCount > 1;
+    if (state.multi) state.card.dataset.dragCount = String(selectedCount);
     state.rects = list.map((c) => {
       const r = c.getBoundingClientRect();
       return { left: r.left + scrollX, top: r.top + scrollY, width: r.width, height: r.height };
@@ -68,7 +74,7 @@ export function enableDragReorder(grid, onMove) {
     state.insertBefore = insertBefore;
     const list = cards();
     for (const c of list) c.classList.remove('drop-before', 'drop-after');
-    if (moveTargetIndex(insertBefore, state.fromIndex) === null) return;
+    if (!state.multi && moveTargetIndex(insertBefore, state.fromIndex) === null) return;
     if (insertBefore < list.length) list[insertBefore].classList.add('drop-before');
     else list[list.length - 1].classList.add('drop-after');
   }
@@ -87,18 +93,19 @@ export function enableDragReorder(grid, onMove) {
 
   function finish(commit) {
     if (!state) return;
-    const { started, card, insertBefore, fromIndex, frame } = state;
+    const { started, card, insertBefore, fromIndex, frame, multi } = state;
     state = null;
     if (!started) return;
     cancelAnimationFrame(frame);
     card.classList.remove('dragging');
     card.style.transform = '';
+    delete card.dataset.dragCount;
     grid.classList.remove('is-dragging');
     for (const c of cards()) c.classList.remove('drop-before', 'drop-after');
     swallowNextClick();
     if (!commit || insertBefore === null) return;
-    const to = moveTargetIndex(insertBefore, fromIndex);
-    if (to !== null) onMove(card.dataset.id, to);
+    if (!multi && moveTargetIndex(insertBefore, fromIndex) === null) return;
+    onDrop(card.dataset.id, insertBefore);
   }
 
   // ドラッグを離した直後の「クリック」で、補正画面などが開かないようにする

@@ -9,6 +9,7 @@ import {
   extractPages,
   insertPages,
   movePages,
+  movePagesBefore,
   normalizeRotation,
   pruneSources,
   removePages,
@@ -192,4 +193,14 @@ test('IDを渡さなければ自動で重ならないIDが付く', () => {
   doc = appendSourcePages(doc, sourceId);
   doc = appendSourcePages(doc, sourceId);
   assert.equal(new Set(ids(doc)).size, 4);
+});
+
+test('ドラッグで離した位置の前に、選んだページをまとめて移動する', () => {
+  const doc = sampleDoc(); // p1 p2 p3 p4
+  assert.deepEqual(ids(movePagesBefore(doc, ['p1'], 3)), ['p2', 'p3', 'p1', 'p4']);
+  assert.deepEqual(ids(movePagesBefore(doc, ['p4', 'p1'], 2)), ['p2', 'p1', 'p4', 'p3']);
+  assert.deepEqual(ids(movePagesBefore(doc, ['p2', 'p3'], 4)), ['p1', 'p4', 'p2', 'p3']);
+  assert.deepEqual(ids(movePagesBefore(doc, ['p3'], 0)), ['p3', 'p1', 'p2', 'p4']);
+  assert.deepEqual(ids(movePagesBefore(doc, ['p2'], 2)), ['p1', 'p2', 'p3', 'p4'], '自分の後ろ＝動かない');
+  assert.throws(() => movePagesBefore(doc, ['p1'], 5), /範囲外/);
 });
