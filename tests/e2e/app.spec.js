@@ -30,6 +30,7 @@ async function exportAndDownload(page) {
   await page.click('[data-action="export"]');
   await expect(page.locator('#result-dialog')).toBeVisible();
   const [download] = await Promise.all([page.waitForEvent('download'), page.click('[data-action="download"]')]);
+  await expect(page.locator('#done-title')).toHaveText('保存しました');
   const bytes = await readFile(await download.path());
   return { name: download.suggestedFilename(), pdf: await PDFDocument.load(bytes) };
 }
@@ -150,4 +151,35 @@ test('一度開けば、オフラインでも起動してPDFを読み込める',
   await expect(loadedThumbs(page)).toHaveCount(3, { timeout: 15_000 });
   const { pdf } = await exportAndDownload(page);
   expect(pdf.getPageCount()).toBe(3);
+});
+
+test('送る（共有シート）が終わったら「完了しました」と表示し、新しく作り直せる', async ({ page }, testInfo) => {
+  // 共有シートの代わり：1回目はキャンセル、2回目は成功したことにする
+  await page.addInitScript(() => {
+    let calls = 0;
+    navigator.canShare = () => true;
+    navigator.share = async () => {
+      calls += 1;
+      if (calls === 1) throw new DOMException('cancel', 'AbortError');
+    };
+  });
+  await page.goto('./');
+  await addFiles(page, [fixture('photo-landscape.jpg')], testInfo);
+  await expect(cards(page)).toHaveCount(1);
+  await page.click('[data-action="export"]');
+  await expect(page.locator('#share-button')).toBeVisible();
+
+  await page.click('[data-action="share"]');
+  await expect(page.locator('#result-ready')).toBeVisible(); // キャンセルしたときは選び直せる
+  await expect(page.locator('#result-done')).toBeHidden();
+
+  await page.click('[data-action="share"]');
+  await expect(page.locator('#result-done')).toBeVisible();
+  await expect(page.locator('#done-title')).toHaveText('完了しました');
+  await expect(page.locator('#done-meta')).toContainText('を送りました');
+
+  await page.click('[data-action="new-document"]');
+  await expect(page.locator('#result-dialog')).toBeHidden();
+  await expect(cards(page)).toHaveCount(0);
+  await expect(page.locator('#empty')).toBeVisible();
 });

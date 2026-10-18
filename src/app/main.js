@@ -35,7 +35,11 @@ const els = {
   inputCamera: $('#input-camera'),
   inputFiles: $('#input-files'),
   resultDialog: $('#result-dialog'),
+  resultReady: $('#result-ready'),
+  resultDone: $('#result-done'),
   resultMeta: $('#result-meta'),
+  doneTitle: $('#done-title'),
+  doneMeta: $('#done-meta'),
   shareButton: $('#share-button'),
   downloadButton: $('#download-button'),
   busy: $('#busy'),
@@ -171,22 +175,42 @@ function showResult() {
   const shareable = canShareFiles();
   els.shareButton.hidden = !shareable;
   els.downloadButton.classList.toggle('primary', !shareable);
-  els.resultDialog.showModal();
+  els.resultReady.hidden = false;
+  els.resultDone.hidden = true;
+  if (!els.resultDialog.open) els.resultDialog.showModal();
+}
+
+/** 送る・保存が終わったことを、ダイアログの中で知らせる */
+function showDone(title, message) {
+  els.doneTitle.textContent = title;
+  els.doneMeta.textContent = message;
+  els.resultReady.hidden = true;
+  els.resultDone.hidden = false;
+  els.doneTitle.focus();
 }
 
 async function shareResult() {
+  let result;
   try {
-    await shareBlob(lastExport.blob, lastExport.fileName);
+    result = await shareBlob(lastExport.blob, lastExport.fileName);
   } catch (error) {
     console.error(error);
     toast('共有できませんでした。「ダウンロード」を試してください', 'error');
+    return;
   }
+  // 共有シートを閉じただけ（キャンセル）のときは、そのまま選び直せるようにする
+  if (result === 'shared') showDone('完了しました', `「${lastExport.fileName}」を送りました`);
 }
 
 function downloadResult() {
   downloadBlob(lastExport.blob, lastExport.fileName);
+  showDone('保存しました', `「${lastExport.fileName}」をダウンロードしました`);
+}
+
+function startOver() {
   els.resultDialog.close();
-  toast('ダウンロードしました');
+  els.fileName.value = '';
+  update(createDocument());
 }
 
 // ---- 描画 ----
@@ -368,6 +392,12 @@ function onAction(action) {
       break;
     case 'close-result':
       els.resultDialog.close();
+      break;
+    case 'back-to-result':
+      showResult();
+      break;
+    case 'new-document':
+      startOver();
       break;
   }
 }
