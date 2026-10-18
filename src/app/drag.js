@@ -95,9 +95,21 @@ export function enableDragReorder(grid, onMove) {
     card.style.transform = '';
     grid.classList.remove('is-dragging');
     for (const c of cards()) c.classList.remove('drop-before', 'drop-after');
+    swallowNextClick();
     if (!commit || insertBefore === null) return;
     const to = moveTargetIndex(insertBefore, fromIndex);
     if (to !== null) onMove(card.dataset.id, to);
+  }
+
+  // ドラッグを離した直後の「クリック」で、補正画面などが開かないようにする
+  function swallowNextClick() {
+    const swallow = (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+    };
+    window.addEventListener('click', swallow, { capture: true, once: true });
+    // クリックが起きなかった場合（タッチ操作など）に備えて、少しあとに外す
+    setTimeout(() => window.removeEventListener('click', swallow, { capture: true }), 300);
   }
 
   window.addEventListener('pointermove', (event) => {

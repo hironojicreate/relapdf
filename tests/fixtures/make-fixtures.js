@@ -32,6 +32,53 @@ async function draw(type, width, height) {
 
 const landscapePng = await draw('image/png', 400, 300);
 const landscapeJpg = await draw('image/jpeg', 400, 300);
+
+// 机の上の書類を斜めから撮ったような写真（4点補正・自動検出の確認用）
+const documentPhoto = Buffer.from(
+  (
+    await page.evaluate(() => {
+      const c = document.createElement('canvas');
+      c.width = 1200;
+      c.height = 1600;
+      const g = c.getContext('2d');
+      const bg = g.createLinearGradient(0, 0, 1200, 1600);
+      bg.addColorStop(0, '#6b5a48');
+      bg.addColorStop(1, '#4a3d31');
+      g.fillStyle = bg;
+      g.fillRect(0, 0, 1200, 1600);
+      // 書類の四隅（左上・右上・右下・左下）
+      const q = [
+        [260, 230],
+        [980, 300],
+        [1060, 1380],
+        [150, 1290],
+      ];
+      g.fillStyle = '#f4f2ec';
+      g.beginPath();
+      q.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y)));
+      g.closePath();
+      g.fill();
+      // 文字の行の代わりに、書類の傾きに合わせた灰色の線を描く
+      const lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+      g.strokeStyle = '#6d6a66';
+      g.lineWidth = 9;
+      for (let i = 0; i < 16; i++) {
+        const t = 0.1 + i * 0.05;
+        const left = lerp(q[0], q[3], t);
+        const right = lerp(q[1], q[2], t);
+        const len = i % 4 === 3 ? 0.5 : 0.85;
+        const a = lerp(left, right, 0.08);
+        const b = lerp(left, right, len);
+        g.beginPath();
+        g.moveTo(...a);
+        g.lineTo(...b);
+        g.stroke();
+      }
+      return c.toDataURL('image/jpeg', 0.85);
+    })
+  ).split(',')[1],
+  'base64',
+);
 await browser.close();
 
 // 写真の回転情報（EXIF Orientation = 6：右に90度回して表示）を付けたJPEG
@@ -70,4 +117,5 @@ await writeFile(new URL('photo-landscape.png', dir), landscapePng);
 await writeFile(new URL('photo-landscape.jpg', dir), landscapeJpg);
 await writeFile(new URL('photo-exif-rotate90.jpg', dir), withExifOrientation(landscapeJpg, 6));
 await writeFile(new URL('sample-3pages.pdf', dir), await samplePdf());
+await writeFile(new URL('document-photo.jpg', dir), documentPhoto);
 console.log('テスト用ファイルを作成しました');

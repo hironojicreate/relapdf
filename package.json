@@ -1,6 +1,6 @@
 {
   "name": "relapdf",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "ブラウザ内で完結するPDFアプリ。スマホで撮った写真をPDFに、PCで結合・ページ整理を。",
   "license": "MIT",

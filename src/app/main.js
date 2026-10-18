@@ -14,6 +14,7 @@ import {
   removePages,
   rotatePages,
   serializeDocument,
+  setPerspective,
 } from '../core/page-list.js';
 import { exportPdf, inspectPdf } from '../core/pdf-export.js';
 import { defaultFileName, sanitizeFileName, stripExtension } from '../core/filename.js';
@@ -25,6 +26,7 @@ import { canShareFiles, downloadBlob, shareBlob } from '../web/save.js';
 import { currentMode, saveMode } from '../web/mode.js';
 import { createCameraView } from './camera-view.js';
 import { enableDragReorder } from './drag.js';
+import { createPerspectiveEditor } from './perspective-editor.js';
 import { APP_VERSION } from './version.js';
 
 const THUMB_SIZE = 360;
@@ -242,6 +244,22 @@ const camera = createCameraView({
   onBusy: (text) => (text ? showBusy(text) : hideBusy()),
 });
 
+// ---- 4点補正 ----
+
+const editor = createPerspectiveEditor({
+  getBlob: (page) => store.get(page.content.sourceId),
+  onApply: (pageId, perspective) => {
+    if (!doc.pages.some((p) => p.id === pageId)) return;
+    update(setPerspective(doc, pageId, perspective));
+    toast(perspective ? '補正しました' : '補正を外しました');
+  },
+});
+
+function openEditor(pageId) {
+  const page = doc.pages.find((p) => p.id === pageId);
+  if (page?.content.type === 'image') editor.open(page);
+}
+
 // ---- 書き出し ----
 
 async function createPdf() {
@@ -261,7 +279,11 @@ async function createPdf() {
       getImage: async (page) => {
         imageDone += 1;
         showBusy(`PDFを作成中… ${imageDone} / ${imageTotal}`);
-        return prepareImageForExport(await store.get(page.content.sourceId), { quality, paper });
+        return prepareImageForExport(await store.get(page.content.sourceId), {
+          quality,
+          paper,
+          perspective: page.perspective,
+        });
       },
     });
     lastExport = { blob: new Blob([bytes], { type: 'application/pdf' }), fileName };
@@ -394,7 +416,18 @@ function renderCard(page, index, count) {
     const spinner = document.createElement('div');
     spinner.className = 'spinner';
     thumb.append(spinner, img);
-    thumbnailFor(content)
+    if (content.type === 'image') {
+      thumb.classList.add('clickable');
+      thumb.dataset.op = 'perspective';
+      thumb.title = 'タップして4点補正';
+    }
+    if (page.perspective) {
+      const badge = document.createElement('span');
+      badge.className = 'badge';
+      badge.textContent = '補正済み';
+      thumb.append(badge);
+    }
+    thumbnailFor(page)
       .then((url) => {
         img.src = url;
         img.hidden = false;
@@ -419,6 +452,7 @@ function renderCard(page, index, count) {
   actions.append(
     grip,
     iconButton('move-left', '前へ移動', ICONS.left, index === 0, 'detail-only'),
+    content.type === 'image' ? iconButton('perspective', '4点補正', ICONS.perspective) : '',
     iconButton('rotate', '右に回転', ICONS.rotate),
     iconButton('move-right', '後ろへ移動', ICONS.right, index === count - 1, 'detail-only'),
     iconButton('delete', '削除', ICONS.trash, false, 'danger'),
@@ -442,14 +476,16 @@ function iconButton(op, label, icon, disabled = false, extraClass = '') {
 
 // サムネイルは同時に作りすぎないよう、順番に作る（iPhoneのメモリ対策）
 let thumbnailQueue = Promise.resolve();
-function thumbnailFor(content) {
-  const key = `${content.sourceId}:${content.pageIndex}`;
+function thumbnailFor(page) {
+  const { content, perspective } = page;
+  // 4点補正の内容が変われば、別のサムネイルとして作り直す
+  const key = `${content.sourceId}:${content.pageIndex}:${perspective ? JSON.stringify(perspective) : ''}`;
   if (!thumbnails.has(key)) {
     const task = thumbnailQueue.then(async () => {
       if (!doc.sources[content.sourceId]) throw new Error('削除済みのページです');
       return content.type === 'pdf'
         ? pdfThumbnailUrl(content.sourceId, () => store.bytes(content.sourceId), content.pageIndex, THUMB_SIZE)
-        : imageThumbnailUrl(await store.get(content.sourceId), THUMB_SIZE);
+        : imageThumbnailUrl(await store.get(content.sourceId), THUMB_SIZE, perspective);
     });
     thumbnailQueue = task.catch(() => {});
     task.catch(() => thumbnails.delete(key));
@@ -465,6 +501,7 @@ const ICONS = {
   right: svg('<path d="M9 18l6-6-6-6"/>'),
   rotate: svg('<path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/>'),
   trash: svg('<path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 13h10l1-13"/><path d="M9 7V4h6v3"/>'),
+  perspective: svg('<path d="M6 5l13 2-1 12-13-2z"/><circle cx="6" cy="5" r="1.6" fill="currentColor"/><circle cx="19" cy="7" r="1.6" fill="currentColor"/><circle cx="18" cy="19" r="1.6" fill="currentColor"/><circle cx="5" cy="17" r="1.6" fill="currentColor"/>'),
   grip: svg('<circle cx="9" cy="6" r="1.2"/><circle cx="15" cy="6" r="1.2"/><circle cx="9" cy="12" r="1.2"/><circle cx="15" cy="12" r="1.2"/><circle cx="9" cy="18" r="1.2"/><circle cx="15" cy="18" r="1.2"/>'),
 };
 
@@ -575,6 +612,9 @@ function onPageOp(op, pageId) {
     case 'delete':
       update(removePages(doc, [pageId]));
       break;
+    case 'perspective':
+      openEditor(pageId);
+      return;
     default:
       return;
   }

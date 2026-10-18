@@ -176,6 +176,7 @@ body.mode-easy .page-grid { grid-template-columns: repeat(auto-fill, minmax(140p
 .icon-btn.danger:hover:not(:disabled) { color: var(--danger); }
 .icon-btn:disabled { opacity: .3; cursor: default; }
 .icon-btn svg { width: 20px; height: 20px; }
+.page-actions .icon-btn { flex: 1 1 0; width: auto; min-width: 0; max-width: 48px; }
 
 /* ---- 手順（かんたんモード） ---- */
 .steps {
@@ -287,6 +288,8 @@ dialog .actions { display: flex; flex-direction: column; gap: 10px; }
   opacity: 0; pointer-events: none; transition: opacity .2s;
 }
 .toast.show { opacity: 1; }
+/* 下のバーが出ているときは、ボタンに重ならないようバーの上に出す */
+body.has-bottom-bar .toast { bottom: calc(var(--bottom-bar, 0px) + 16px); }
 .toast.error { background: var(--danger); color: #fff; }
 .drop-overlay {
   position: fixed; inset: 12px; z-index: 40; display: grid; place-items: center;
@@ -294,6 +297,54 @@ dialog .actions { display: flex; flex-direction: column; gap: 10px; }
   background: color-mix(in srgb, var(--accent-soft) 85%, transparent);
   font-size: 22px; font-weight: 700; color: var(--accent); pointer-events: none;
 }
+/* ---- 4点補正 ---- */
+.editor {
+  position: fixed; inset: 0; z-index: 65; display: flex; flex-direction: column;
+  background: #12151b; color: #e8ecf2;
+}
+body.editor-open { overflow: hidden; }
+.editor-top {
+  display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px;
+  padding: calc(env(safe-area-inset-top, 0px) + 8px) 12px 8px;
+}
+.editor-top h2 { margin: 0; font-size: 17px; }
+.editor-top .btn.subtle { justify-self: start; color: #c5cdd9; }
+.editor-top .btn.primary { justify-self: end; min-width: 84px; }
+.editor-hint { margin: 0; text-align: center; font-size: 13px; color: #9aa4b5; }
+.editor-stage { position: relative; flex: 1; min-height: 0; overflow: hidden; touch-action: none; }
+.editor-stage canvas#editor-canvas { position: absolute; display: block; }
+.editor-stage svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.editor .shade { fill: rgba(0, 0, 0, .5); }
+.editor .quad { fill: none; stroke: #5b8cff; stroke-width: 2.5; stroke-linejoin: round; }
+.editor .handle { cursor: grab; }
+.editor .handle .hit { fill: transparent; }
+.editor .handle .dot { fill: rgba(255, 255, 255, .95); stroke: #2f6df6; stroke-width: 3; }
+.editor .handle.mid .dot { fill: #2f6df6; stroke: #fff; stroke-width: 2.5; }
+.editor-spinner { position: absolute; inset: 0; margin: auto; display: none; }
+.editor.loading .editor-spinner { display: block; }
+.editor.loading #editor-canvas, .editor.loading svg { visibility: hidden; }
+.loupe {
+  position: absolute; top: 12px; left: 12px; width: 120px; height: 120px; border-radius: 50%;
+  border: 3px solid #fff; box-shadow: 0 6px 20px rgba(0, 0, 0, .5); pointer-events: none;
+}
+.loupe.right { left: auto; right: 12px; }
+.editor-bottom {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px;
+  padding: 10px 16px calc(env(safe-area-inset-bottom, 0px) + 12px);
+}
+.editor-actions { display: flex; gap: 4px; }
+.editor-actions .btn.subtle { color: #c5cdd9; padding: 0 10px; }
+.switch { display: inline-flex; align-items: center; gap: 10px; font-weight: 600; cursor: pointer; min-height: 44px; }
+.switch input { appearance: none; -webkit-appearance: none; margin: 0; width: 46px; height: 28px; border-radius: 14px; background: #3a4250; position: relative; cursor: pointer; transition: background .15s; }
+.switch input::after { content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: #fff; transition: transform .15s; }
+.switch input:checked { background: var(--accent); }
+.switch input:checked::after { transform: translateX(18px); }
+.badge {
+  position: absolute; left: 8px; bottom: 8px; z-index: 1; padding: 2px 8px; border-radius: 999px;
+  background: rgba(31, 157, 85, .92); color: #fff; font-size: 11px; font-weight: 700;
+}
+.thumb.clickable { cursor: pointer; }
+
 /* ---- アプリ内カメラ ---- */
 .camera {
   position: fixed; inset: 0; z-index: 70; background: #000; color: #fff;
@@ -450,6 +501,28 @@ body.has-bottom-bar .app-version { bottom: calc(var(--bottom-bar, 0px) + 6px); }
     <div class="camera-last-wrap"><img id="camera-last" class="camera-last" alt="最後に撮った写真" hidden></div>
     <button type="button" id="camera-shutter" class="shutter" data-camera="shoot" aria-label="撮影" disabled></button>
     <button type="button" class="camera-done" data-camera="done">完了</button>
+  </div>
+</div>
+
+<div id="editor" class="editor" hidden role="dialog" aria-modal="true" aria-labelledby="editor-title">
+  <div class="editor-top">
+    <button type="button" class="btn subtle" data-editor="cancel">キャンセル</button>
+    <h2 id="editor-title">4点補正</h2>
+    <button type="button" class="btn primary" data-editor="apply">完了</button>
+  </div>
+  <p class="editor-hint">書類の四隅に、丸を合わせてください</p>
+  <div class="editor-stage" id="editor-stage">
+    <canvas id="editor-canvas"></canvas>
+    <svg id="editor-overlay" xmlns="http://www.w3.org/2000/svg"></svg>
+    <canvas id="editor-loupe" class="loupe" width="240" height="240" hidden></canvas>
+    <div class="spinner editor-spinner"></div>
+  </div>
+  <div class="editor-bottom">
+    <label class="switch"><input type="checkbox" id="editor-a4"><span>A4比率に合わせる</span></label>
+    <div class="editor-actions">
+      <button type="button" class="btn subtle" data-editor="reset">位置を戻す</button>
+      <button type="button" class="btn subtle" data-editor="remove">補正しない</button>
+    </div>
   </div>
 </div>
 

@@ -4,6 +4,7 @@
 // 写真の回転情報（EXIF）は、ブラウザが画像を読み込むときに反映される。
 
 import { MAX_SOURCE_LONG_SIDE, fitLongSide, targetImageSize } from '../core/layout.js';
+import { outputSize, toPixels, warpPerspective } from '../core/perspective.js';
 
 /** 読み込めない画像形式のときのエラー */
 export class UnsupportedImageError extends Error {
@@ -81,33 +82,86 @@ export async function loadImageFile(file) {
 }
 
 /**
- * 書き出し用の画像を作る。
- * @returns {Promise<{bytes: Uint8Array, format: 'jpeg', width: number, height: number}>}
- *   width/height は元画像の大きさ（用紙への配置の計算に使う）
+ * 4点補正をかけた画像を作る（ImageData を使って、Core の warpPerspective で引き伸ばす）。
+ * 縮小しすぎてギザギザにならないよう、先に元画像を出力に近い大きさまで縮めてから引き伸ばす。
+ * @returns {Promise<Blob>}
  */
-export async function prepareImageForExport(blob, { quality = 'standard', paper = 'a4' } = {}) {
+async function encodeCorrected(decoded, perspective, width, height, quality) {
+  const cornersPx = toPixels(perspective.corners, decoded.width, decoded.height);
+  const natural = outputSize(cornersPx, perspective.aspect);
+  const k = Math.min(1, Math.max(width / natural.width, height / natural.height) * 1.25);
+  const sw = Math.max(1, Math.round(decoded.width * k));
+  const sh = Math.max(1, Math.round(decoded.height * k));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = sw;
+  canvas.height = sh;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, sw, sh);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(decoded.source, 0, 0, sw, sh);
+  const src = ctx.getImageData(0, 0, sw, sh);
+  const warped = warpPerspective(
+    src,
+    cornersPx.map((p) => ({ x: p.x * (sw / decoded.width), y: p.y * (sh / decoded.height) })),
+    width,
+    height,
+  );
+  canvas.width = width;
+  canvas.height = height;
+  ctx.putImageData(new ImageData(warped.data, width, height), 0, 0);
+  try {
+    return await new Promise((resolve, reject) => {
+      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('画像を作れませんでした'))), 'image/jpeg', quality);
+    });
+  } finally {
+    canvas.width = 0;
+    canvas.height = 0;
+  }
+}
+
+/** 4点補正をかけたあとの画像の大きさ（補正がなければ元のまま） */
+function correctedSize(decoded, perspective) {
+  if (!perspective) return { width: decoded.width, height: decoded.height };
+  return outputSize(toPixels(perspective.corners, decoded.width, decoded.height), perspective.aspect);
+}
+
+/**
+ * 書き出し用の画像を作る。4点補正があればかけてから、画質の設定に合わせて縮小する。
+ * @returns {Promise<{bytes: Uint8Array, format: 'jpeg', width: number, height: number}>}
+ *   width/height は補正後の画像の大きさ（用紙への配置の計算に使う）
+ */
+export async function prepareImageForExport(blob, { quality = 'standard', paper = 'a4', perspective = null } = {}) {
   const decoded = await decodeImage(blob);
   try {
-    // M3：4点補正、M5：色補正は、ここで縮小の前に行う
-    const target = targetImageSize(decoded.width, decoded.height, quality, paper);
-    const jpeg = await encodeImage(decoded.source, target.width, target.height, { quality: target.jpegQuality });
+    // M5：色補正（書類モード）は、ここで縮小の前後に行う
+    const size = correctedSize(decoded, perspective);
+    const target = targetImageSize(size.width, size.height, quality, paper);
+    const jpeg = perspective
+      ? await encodeCorrected(decoded, perspective, target.width, target.height, target.jpegQuality)
+      : await encodeImage(decoded.source, target.width, target.height, { quality: target.jpegQuality });
     return {
       bytes: new Uint8Array(await jpeg.arrayBuffer()),
       format: 'jpeg',
-      width: decoded.width,
-      height: decoded.height,
+      width: target.width,
+      height: target.height,
     };
   } finally {
     decoded.close();
   }
 }
 
-/** サムネイル用の小さな画像を作り、表示用のURLを返す */
-export async function imageThumbnailUrl(blob, maxSide) {
+/** サムネイル用の小さな画像を作り、表示用のURLを返す（4点補正があれば反映する） */
+export async function imageThumbnailUrl(blob, maxSide, perspective = null) {
   const decoded = await decodeImage(blob);
   try {
-    const size = fitLongSide(decoded.width, decoded.height, maxSide);
-    const thumb = await encodeImage(decoded.source, size.width, size.height, { quality: 0.8 });
+    const corrected = correctedSize(decoded, perspective);
+    const size = fitLongSide(corrected.width, corrected.height, maxSide);
+    const thumb = perspective
+      ? await encodeCorrected(decoded, perspective, size.width, size.height, 0.8)
+      : await encodeImage(decoded.source, size.width, size.height, { quality: 0.8 });
     return URL.createObjectURL(thumb);
   } finally {
     decoded.close();

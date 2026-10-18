@@ -7,7 +7,7 @@
 
 単一HTMLのPWAとして作り、オフラインでも動きます。
 
-> 開発中です（現在 M2：かんたんモード v1 まで）。進み具合は [docs/handover.md](docs/handover.md) を見てください。
+> 開発中です（現在 M3：4点補正 まで）。進み具合は [docs/handover.md](docs/handover.md) を見てください。
 
 ## ドキュメント
 
