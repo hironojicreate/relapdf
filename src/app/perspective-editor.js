@@ -3,9 +3,12 @@
 // 写真の上に四角形を表示し、四隅の丸（角）と辺の中点の丸をつまんで、書類の四隅に合わせてもらう。
 // つまんでいる間は、指で隠れる部分を拡大した「ルーペ」を表示する。
 // 画面にはページの回転をかけた向きで表示し、保存するときに回転前の座標に戻す。
+// 書類の端が写真からはみ出していることもあるので、四隅は写真の外（画面の端まで）にも動かせる。
 
 import { fitLongSide } from '../core/layout.js';
+import { PERSPECTIVE_MARGIN } from '../core/page-list.js';
 import { defaultCorners, fromDisplayPoint, isConvexQuad, toDisplayPoint } from '../core/perspective.js';
+import { drawImageClipped } from '../web/canvas-util.js';
 import { decodeImage } from '../web/image.js';
 
 const DISPLAY_LONG_SIDE = 1600; // 補正画面に表示する画像の長辺（メモリを節約するため縮小する）
@@ -122,7 +125,8 @@ export function createPerspectiveEditor({ getBlob, onApply }) {
     if (!box) return;
     const pts = corners.map(toStage);
     const quad = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ') + ' Z';
-    const outer = `M${box.left},${box.top} h${box.width} v${box.height} h${-box.width} Z`;
+    const rect = stage.getBoundingClientRect();
+    const outer = `M0,0 h${rect.width} v${rect.height} h${-rect.width} Z`;
     let html = `<path class="shade" d="${outer} ${quad}" fill-rule="evenodd"/>`;
     html += `<path class="quad" d="${quad}"/>`;
     pts.forEach((p, i) => {
@@ -144,7 +148,18 @@ export function createPerspectiveEditor({ getBlob, onApply }) {
     return { x: (clientX - rect.left - box.left) / box.width, y: (clientY - rect.top - box.top) / box.height };
   }
 
-  const clamp01 = (v) => Math.min(1, Math.max(0, v));
+  const clampMargin = (v) => Math.min(1 + PERSPECTIVE_MARGIN, Math.max(-PERSPECTIVE_MARGIN, v));
+
+  /** 丸を動かせる範囲（写真の外は PERSPECTIVE_MARGIN まで。ただし画面の外には出さない） */
+  function bounds() {
+    const rect = stage.getBoundingClientRect();
+    return {
+      minX: Math.max(-PERSPECTIVE_MARGIN, -box.left / box.width),
+      maxX: Math.min(1 + PERSPECTIVE_MARGIN, (rect.width - box.left) / box.width),
+      minY: Math.max(-PERSPECTIVE_MARGIN, -box.top / box.height),
+      maxY: Math.min(1 + PERSPECTIVE_MARGIN, (rect.height - box.top) / box.height),
+    };
+  }
 
   overlay.addEventListener('pointerdown', (event) => {
     const handle = event.target.closest('[data-handle]');
@@ -169,8 +184,12 @@ export function createPerspectiveEditor({ getBlob, onApply }) {
     const dx = p.x - drag.start.x;
     const dy = p.y - drag.start.y;
     const next = drag.startCorners.map((c) => ({ ...c }));
+    const b = bounds();
     const move = (i) => {
-      next[i] = { x: clamp01(drag.startCorners[i].x + dx), y: clamp01(drag.startCorners[i].y + dy) };
+      next[i] = {
+        x: Math.min(b.maxX, Math.max(b.minX, drag.startCorners[i].x + dx)),
+        y: Math.min(b.maxY, Math.max(b.minY, drag.startCorners[i].y + dy)),
+      };
     };
     if (drag.kind === 'c') move(drag.index);
     else {
@@ -215,7 +234,14 @@ export function createPerspectiveEditor({ getBlob, onApply }) {
     const region = (cssSize / LOUPE_ZOOM) * (base.width / box.width);
     const bx = point.x * base.width;
     const by = point.y * base.height;
-    ctx.drawImage(base, bx - region / 2, by - region / 2, region, region, 0, 0, size, size);
+    // 写真の外にかかる部分は切り取って描く（Safari で引き伸ばされないように）
+    drawImageClipped(
+      ctx,
+      base,
+      { sx: bx - region / 2, sy: by - region / 2, sw: region, sh: region, dx: 0, dy: 0, dw: size, dh: size },
+      base.width,
+      base.height,
+    );
     // 四角形の線
     const toLoupe = (c) => ({
       x: ((c.x * base.width - (bx - region / 2)) / region) * size,
@@ -241,7 +267,9 @@ export function createPerspectiveEditor({ getBlob, onApply }) {
   function apply() {
     if (!page) return;
     const value = {
-      corners: corners.map((c) => fromDisplayPoint(c, page.rotation)).map((c) => ({ x: clamp01(c.x), y: clamp01(c.y) })),
+      corners: corners
+        .map((c) => fromDisplayPoint(c, page.rotation))
+        .map((c) => ({ x: clampMargin(c.x), y: clampMargin(c.y) })),
       aspect: a4Toggle.checked ? 'a4' : 'free',
     };
     const id = page.id;

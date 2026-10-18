@@ -163,3 +163,19 @@ test('引き伸ばし：台形を長方形にする（左右の辺が内側に�
 test('割合の四隅をピクセルにする', () => {
   assert.deepEqual(toPixels([{ x: 0.5, y: 0.25 }], 200, 100), [{ x: 100, y: 25 }]);
 });
+
+test('引き伸ばし：写真の外にはみ出した部分は白になる', () => {
+  const src = gradient(100, 100);
+  // 左上の角を写真の外（-50, -50）に置く
+  const corners = [
+    { x: -50, y: -50 },
+    { x: 100, y: 0 },
+    { x: 100, y: 100 },
+    { x: 0, y: 100 },
+  ];
+  const out = warpPerspective(src, corners, 100, 100);
+  assert.deepEqual(pixel(out, 0, 0), [255, 255, 255, 255]);
+  // 写真の中の部分は、ふつうに引き伸ばされる
+  const [r, g, , a] = pixel(out, 90, 90);
+  assert.ok(r > 80 && g > 80 && a === 255);
+});

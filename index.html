@@ -398,6 +398,20 @@ body.camera-open { overflow: hidden; }
   justify-self: end; min-width: 76px; min-height: 48px; padding: 0 18px; border-radius: 999px; border: 0;
   background: var(--accent); color: #fff; font-weight: 700; font-size: 16px; cursor: pointer;
 }
+/* 明るさの調整 */
+.camera-adjust {
+  position: relative; margin-top: auto; align-self: center; z-index: 1;
+  display: flex; align-items: center; gap: 10px; width: min(360px, calc(100% - 48px));
+  padding: 8px 14px; border-radius: 999px; background: rgba(0, 0, 0, .5);
+}
+.camera-adjust svg { width: 20px; height: 20px; flex: none; }
+.camera-adjust input[type="range"] { flex: 1; min-width: 0; accent-color: #fff; height: 28px; }
+.camera-brightness-value {
+  min-width: 52px; min-height: 32px; border: 0; border-radius: 999px; background: rgba(255, 255, 255, .15);
+  color: #fff; font-size: 13px; font-weight: 700; cursor: pointer;
+}
+.camera-adjust + .camera-bottom { margin-top: 0; }
+
 /* 横向きのときは、ボタンを右側に縦に並べる */
 @media (orientation: landscape) and (max-height: 500px) {
   .camera-bottom {
@@ -407,6 +421,7 @@ body.camera-open { overflow: hidden; }
     background: linear-gradient(to left, rgba(0, 0, 0, .6), transparent);
   }
   .camera-last-wrap { justify-self: center; align-self: start; }
+  .camera-adjust { position: absolute; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 12px); transform: translateX(-50%); }
   .camera-done { justify-self: center; align-self: end; }
 }
 
@@ -517,6 +532,12 @@ body.has-bottom-bar .app-version { bottom: calc(var(--bottom-bar, 0px) + 6px); }
   <div id="camera-error" class="camera-error" hidden>
     <p id="camera-error-text"></p>
     <button type="button" class="btn primary" data-camera="os-camera">端末のカメラアプリで撮る</button>
+  </div>
+  <div class="camera-adjust">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="3.5"/><path d="M12 5v1.5M12 17.5V19M5 12h1.5M17.5 12H19"/></svg>
+    <input type="range" id="camera-brightness" min="-1" max="1" step="0.05" value="0" aria-label="明るさ">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/></svg>
+    <button type="button" class="camera-brightness-value" id="camera-brightness-value" data-camera="brightness-reset" title="明るさを元に戻す">100%</button>
   </div>
   <div class="camera-bottom">
     <div class="camera-last-wrap"><img id="camera-last" class="camera-last" alt="最後に撮った写真" hidden></div>

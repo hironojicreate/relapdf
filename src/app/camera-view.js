@@ -4,6 +4,9 @@
 // 「完了」を押すと、渡した写真の処理が終わるのを待ってから閉じる。
 
 import { CameraError, captureFrame, startCamera, stopCamera } from '../web/camera.js';
+import { brightnessFactor } from '../core/color.js';
+
+const BRIGHTNESS_KEY = 'relapdf:camera-brightness';
 
 /**
  * @param {object} options
@@ -22,12 +25,35 @@ export function createCameraView({ onCapture, onDone, onUseOsCamera, onBusy }) {
   const errorBox = $('#camera-error');
   const errorText = $('#camera-error-text');
   const doneButton = root.querySelector('[data-camera="done"]');
+  const brightnessInput = $('#camera-brightness');
+  const brightnessLabel = $('#camera-brightness-value');
 
   let stream = null;
   let shots = 0;
   let pending = Promise.resolve();
   let lastUrl = null;
   let capturing = false;
+  let brightness = 1; // 明るさの倍率（撮った写真にも同じ倍率をかける）
+
+  // 明るさ：前回の設定を覚えておく
+  function setBrightness(amount, remember = true) {
+    brightnessInput.value = String(amount);
+    brightness = brightnessFactor(amount);
+    video.style.filter = brightness === 1 ? '' : `brightness(${brightness})`;
+    brightnessLabel.textContent = `${Math.round(brightness * 100)}%`;
+    if (!remember) return;
+    try {
+      localStorage.setItem(BRIGHTNESS_KEY, String(amount));
+    } catch {
+      // 保存できなくても調整はできる
+    }
+  }
+  try {
+    setBrightness(Number(localStorage.getItem(BRIGHTNESS_KEY)) || 0, false);
+  } catch {
+    setBrightness(0, false);
+  }
+  brightnessInput.addEventListener('input', () => setBrightness(Number(brightnessInput.value)));
 
   function isOpen() {
     return !root.hidden;
@@ -90,7 +116,7 @@ export function createCameraView({ onCapture, onDone, onUseOsCamera, onBusy }) {
     root.classList.add('flash');
     navigator.vibrate?.(15);
     try {
-      const frame = await captureFrame(video);
+      const frame = await captureFrame(video, { brightness });
       shots += 1;
       if (lastUrl) URL.revokeObjectURL(lastUrl);
       lastUrl = URL.createObjectURL(frame.blob);
@@ -127,6 +153,7 @@ export function createCameraView({ onCapture, onDone, onUseOsCamera, onBusy }) {
     const action = event.target.closest('[data-camera]')?.dataset.camera;
     if (action === 'shoot') shoot();
     else if (action === 'done') done();
+    else if (action === 'brightness-reset') setBrightness(0);
     else if (action === 'os-camera') {
       close();
       onUseOsCamera();

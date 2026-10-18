@@ -18,6 +18,12 @@ export const FILTERS = Object.freeze(['none', 'document']);
 /** 4点補正の比率。'free' は四隅の位置から自然な比率、'a4' はA4比率に合わせる */
 export const ASPECTS = Object.freeze(['free', 'a4']);
 
+/**
+ * 4点補正の四隅を、写真の外にどこまで出せるか（写真の幅・高さに対する割合）。
+ * 書類の端が写真からはみ出していても補正できるようにするため。はみ出した部分は白になる。
+ */
+export const PERSPECTIVE_MARGIN = 0.25;
+
 /** 元データの種類 */
 export const SOURCE_KINDS = Object.freeze(['pdf', 'image']);
 
@@ -169,7 +175,7 @@ export function rotatePages(doc, pageIds, delta) {
 
 /**
  * 4点補正を設定する。null で補正を外す。
- * corners は [左上, 右上, 右下, 左下] の順で、元画像に対する0〜1の割合。
+ * corners は [左上, 右上, 右下, 左下] の順で、元画像に対する割合（0〜1。写真の外は PERSPECTIVE_MARGIN まで）。
  * 元画像は「写真の回転情報を反映したあと・ユーザーの回転をかける前」の向き。
  */
 export function setPerspective(doc, pageId, perspective) {
@@ -313,8 +319,10 @@ function normalizePerspective(perspective) {
   if (!Array.isArray(corners) || corners.length !== 4) throw new Error('4点補正の四隅は4つ必要です');
   if (!ASPECTS.includes(aspect)) throw new Error(`4点補正の比率が不正です: ${aspect}`);
   const normalized = corners.map((c) => {
-    if (!c || !Number.isFinite(c.x) || !Number.isFinite(c.y) || c.x < 0 || c.x > 1 || c.y < 0 || c.y > 1) {
-      throw new Error('4点補正の座標は0〜1の範囲で指定してください');
+    const min = -PERSPECTIVE_MARGIN;
+    const max = 1 + PERSPECTIVE_MARGIN;
+    if (!c || !Number.isFinite(c.x) || !Number.isFinite(c.y) || c.x < min || c.x > max || c.y < min || c.y > max) {
+      throw new Error(`4点補正の座標は${min}〜${max}の範囲で指定してください`);
     }
     return { x: c.x, y: c.y };
   });

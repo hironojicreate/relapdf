@@ -109,7 +109,7 @@ export function fromDisplayPoint(point, rotation) {
 
 /**
  * 四隅で囲まれた部分を、outWidth × outHeight の長方形に引き伸ばした画像を作る。
- * 色は周りの4ピクセルから滑らかに補う（バイリニア補間）。
+ * 色は周りの4ピクセルから滑らかに補う（バイリニア補間）。写真の外にあたる部分は白にする。
  * @param {{data: Uint8ClampedArray, width: number, height: number}} src
  * @param {{x: number, y: number}[]} cornersPx 元画像のピクセル座標の四隅
  */
@@ -138,6 +138,14 @@ export function warpPerspective(src, cornersPx, outWidth, outHeight) {
     for (let u = 0; u < outWidth; u++) {
       const x = nx / dw - 0.5;
       const y = ny / dw - 0.5;
+      if (x < -1 || y < -1 || x > sw || y > sh) {
+        out[o] = out[o + 1] = out[o + 2] = out[o + 3] = 255;
+        o += 4;
+        nx += h[0];
+        ny += h[3];
+        dw += h[6];
+        continue;
+      }
       const xc = x < 0 ? 0 : x > maxX ? maxX : x;
       const yc = y < 0 ? 0 : y > maxY ? maxY : y;
       const x0 = Math.floor(xc);

@@ -164,3 +164,25 @@ test('PC：ページの絵をドラッグしたときは補正画面を開かな
   });
   expect(names).toEqual(['photo-landscape.png', 'photo-landscape.jpg']);
 });
+
+test('四隅は写真の外（画面の端の方）まで動かせて、はみ出した部分は白で書き出す', async ({ page }) => {
+  await addPhoto(page);
+  await openEditor(page);
+  // 左上の角を、写真の外へ大きく動かす
+  await dragHandle(page, 'c0', -0.6, -0.6);
+  // 丸は画面（補正画面の表示エリア）の中に残る
+  const dot = await page.locator('#editor-overlay [data-handle="c0"] .dot').boundingBox();
+  const stage = await page.locator('#editor-stage').boundingBox();
+  expect(dot.x + dot.width / 2).toBeGreaterThanOrEqual(stage.x - 1);
+  expect(dot.y + dot.height / 2).toBeGreaterThanOrEqual(stage.y - 1);
+  await page.click('[data-editor="apply"]');
+  const { corners } = (await pageState(page)).perspective;
+  expect(Math.min(corners[0].x, corners[0].y)).toBeLessThan(0);
+  expect(Math.min(corners[0].x, corners[0].y)).toBeGreaterThanOrEqual(-0.25);
+
+  await page.click('[data-action="go-save"]');
+  await page.click('[data-action="export"]');
+  const [download] = await Promise.all([page.waitForEvent('download'), page.click('[data-action="download"]')]);
+  const pdf = await PDFDocument.load(await readFile(await download.path()));
+  expect(pdf.getPageCount()).toBe(1);
+});

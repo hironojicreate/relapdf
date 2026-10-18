@@ -179,3 +179,57 @@ test('スマホ：指（タッチ操作）でつまみをドラッグして並�
   await touch('touchEnd');
   await expect.poll(() => order(page)).toEqual(['photo-landscape.png', 'photo-landscape.jpg']);
 });
+
+test('カメラの明るさを調整でき、撮った写真にも反映され、次回も覚えている', async ({ page }) => {
+  await useEasyMode(page);
+  await page.click('#empty [data-action="camera"]');
+  const shutter = page.locator('#camera-shutter');
+  await expect(shutter).toBeEnabled();
+  await expect(page.locator('#camera-brightness-value')).toHaveText('100%');
+
+  // 写真の平均の明るさ（元データの中身から計算）
+  const averages = () =>
+    page.evaluate(async () => {
+      const doc = window.__relapdf.getDoc();
+      const results = [];
+      for (const page of doc.pages) {
+        const db = await new Promise((resolve) => {
+          const req = indexedDB.open('relapdf');
+          req.onsuccess = () => resolve(req.result);
+        });
+        const record = await new Promise((resolve) => {
+          const req = db.transaction('sources').objectStore('sources').get(page.content.sourceId);
+          req.onsuccess = () => resolve(req.result);
+        });
+        const bitmap = await createImageBitmap(new Blob([record.data], { type: record.type }));
+        const c = new OffscreenCanvas(64, 48);
+        const g = c.getContext('2d');
+        g.drawImage(bitmap, 0, 0, 64, 48);
+        const d = g.getImageData(0, 0, 64, 48).data;
+        let sum = 0;
+        for (let i = 0; i < d.length; i += 4) sum += d[i] + d[i + 1] + d[i + 2];
+        results.push(sum / (d.length / 4) / 3);
+      }
+      return results;
+    });
+
+  await shutter.click();
+  await expect(page.locator('#camera-count')).toHaveText('1枚');
+  // いちばん暗くして撮る
+  await page.locator('#camera-brightness').fill('-1');
+  await expect(page.locator('#camera-brightness-value')).toHaveText('50%');
+  expect(await page.locator('#camera-video').evaluate((v) => v.style.filter)).toBe('brightness(0.5)');
+  await shutter.click();
+  await expect(page.locator('#camera-count')).toHaveText('2枚');
+  await page.click('[data-camera="done"]');
+  await expect(cards(page)).toHaveCount(2);
+  const [normal, dark] = await averages();
+  expect(dark).toBeLessThan(normal * 0.7);
+
+  // 次にカメラを開いたときも覚えている。数字を押すと元に戻る
+  await page.click('#workspace [data-action="camera"]');
+  await expect(page.locator('#camera-brightness-value')).toHaveText('50%');
+  await page.click('#camera-brightness-value');
+  await expect(page.locator('#camera-brightness-value')).toHaveText('100%');
+  expect(await page.locator('#camera-video').evaluate((v) => v.style.filter)).toBe('');
+});

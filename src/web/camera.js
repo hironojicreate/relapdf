@@ -4,6 +4,7 @@
 // 画面の向きを固定していなければ、映像は端末の向きに合わせて回るので、撮った写真もその向きになる。
 
 import { MAX_SOURCE_LONG_SIDE, fitLongSide } from '../core/layout.js';
+import { applyBrightness } from '../core/color.js';
 import { encodeImage } from './image.js';
 
 /** カメラを使えないときのエラー。reason は画面に出す説明 */
@@ -62,15 +63,37 @@ export function stopCamera(stream, video) {
 
 /**
  * 今映っている1コマを写真（JPEG）にする。長辺は元データの上限までに縮小する。
+ * @param {HTMLVideoElement} video
+ * @param {{ brightness?: number }} [options] brightness は明るさの倍率（1 でそのまま）
  * @returns {Promise<{blob: Blob, width: number, height: number}>}
  */
-export async function captureFrame(video) {
+export async function captureFrame(video, { brightness = 1 } = {}) {
   const width = video.videoWidth;
   const height = video.videoHeight;
   if (!width || !height) throw new Error('カメラの準備ができていません');
   const size = fitLongSide(width, height, MAX_SOURCE_LONG_SIDE);
-  const blob = await encodeImage(video, size.width, size.height, { quality: 0.92 });
-  return { blob, width: size.width, height: size.height };
+  if (brightness === 1) {
+    const blob = await encodeImage(video, size.width, size.height, { quality: 0.92 });
+    return { blob, width: size.width, height: size.height };
+  }
+  // 明るさを変えるときは、1コマを描いてから色を調整する
+  const canvas = document.createElement('canvas');
+  canvas.width = size.width;
+  canvas.height = size.height;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(video, 0, 0, size.width, size.height);
+  const image = ctx.getImageData(0, 0, size.width, size.height);
+  applyBrightness(image, brightness);
+  ctx.putImageData(image, 0, 0);
+  try {
+    const blob = await new Promise((resolve, reject) => {
+      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('写真を作れませんでした'))), 'image/jpeg', 0.92);
+    });
+    return { blob, width: size.width, height: size.height };
+  } finally {
+    canvas.width = 0;
+    canvas.height = 0;
+  }
 }
 
 function describeCameraError(error) {

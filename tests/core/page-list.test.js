@@ -123,7 +123,10 @@ test('4点補正は画像ページだけに設定でき、外すこともでき�
 
   assert.throws(() => setPerspective(doc, 'p1', { corners }), /画像のページだけ/);
   assert.throws(() => setPerspective(doc, 'p4', { corners: corners.slice(0, 3) }), /4つ必要/);
-  assert.throws(() => setPerspective(doc, 'p4', { corners: [...corners.slice(0, 3), { x: 1.2, y: 0 }] }), /0〜1/);
+  assert.throws(() => setPerspective(doc, 'p4', { corners: [...corners.slice(0, 3), { x: 1.3, y: 0 }] }), /範囲/);
+  // 写真から少しはみ出す位置は使える（書類の端が写真の外にある場合）
+  const outside = setPerspective(doc, 'p4', { corners: [{ x: -0.1, y: -0.2 }, ...corners.slice(1)] });
+  assert.deepEqual(outside.pages[3].perspective.corners[0], { x: -0.1, y: -0.2 });
   assert.throws(() => setPerspective(doc, 'p4', { corners, aspect: 'letter' }), /比率が不正/);
 });
 
