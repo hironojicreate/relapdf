@@ -6,3 +6,4 @@
 - コードのコメント・ドキュメントは日本語。テストは `npm test`（Core等）と `npm run test:e2e`（画面）
 - アプリのファイル（index.html、src/、vendor/、icons/、sw.js）を変えたら `npm run precache` でキャッシュ一覧を作り直す
 - ライブラリは `vendor/` に同梱する（CDNは使わない）。MIT/Apache/OFL系のみ、AGPL系は使わない
+- バージョンを上げるときは `src/app/version.js` と `package.json` の両方を変える

@@ -347,6 +347,14 @@ body.camera-open { overflow: hidden; }
   .camera-done { justify-self: center; align-self: end; }
 }
 
+/* ---- バージョン表示（画面右下。下のバーが出ているときは、その上に出す） ---- */
+.app-version {
+  position: fixed; right: 12px; z-index: 30; pointer-events: none;
+  bottom: calc(var(--bottom-bar, 0px) + var(--safe-bottom) + 6px);
+  font-size: 12px; letter-spacing: .02em; color: var(--text-muted); opacity: .75;
+}
+body.has-bottom-bar .app-version { bottom: calc(var(--bottom-bar, 0px) + 6px); }
+
 @media (prefers-reduced-motion: reduce) {
   .spinner { animation-duration: 2s; }
   .thumb img { transition: none; }
@@ -473,6 +481,7 @@ body.camera-open { overflow: hidden; }
 
 <div id="busy" class="busy" hidden role="alert" aria-busy="true"><div class="spinner"></div><p id="busy-text"></p></div>
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
+<div id="app-version" class="app-version"></div>
 <div id="drop-overlay" class="drop-overlay" hidden>ここにドロップして追加</div>
 <noscript><p style="padding:16px">RelaPDFを使うには、JavaScriptを有効にしてください。</p></noscript>
 </body>

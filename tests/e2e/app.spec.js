@@ -190,3 +190,24 @@ test('送る（共有シート）が終わったら「完了しました」と�
   await expect(cards(page)).toHaveCount(0);
   await expect(page.locator('#empty')).toBeVisible();
 });
+
+test('画面右下にバージョンを表示し、下のバーのボタンと重ならない', async ({ page }, testInfo) => {
+  const pkg = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
+  await page.goto('./');
+  const version = page.locator('#app-version');
+  await expect(version).toHaveText(`RelaPDF v${pkg.version}`);
+  await expect(version).toBeVisible();
+  const viewport = page.viewportSize();
+  const box = await version.boundingBox();
+  expect(box.x + box.width).toBeGreaterThan(viewport.width - 40); // 右端
+  expect(box.y + box.height).toBeGreaterThan(viewport.height - 60); // 下端
+
+  // ページを追加して下のバーが出ても、バーの上に表示される
+  await addFiles(page, [fixture('photo-landscape.jpg')], testInfo);
+  await expect(cards(page)).toHaveCount(1);
+  const bar = page.locator(isMobile(testInfo) ? '#next-bar' : '#export-bar');
+  await expect(bar).toBeVisible();
+  const barBox = await bar.boundingBox();
+  const moved = await version.boundingBox();
+  expect(moved.y + moved.height).toBeLessThanOrEqual(barBox.y + 1);
+});

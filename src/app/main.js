@@ -25,6 +25,7 @@ import { canShareFiles, downloadBlob, shareBlob } from '../web/save.js';
 import { currentMode, saveMode } from '../web/mode.js';
 import { createCameraView } from './camera-view.js';
 import { enableDragReorder } from './drag.js';
+import { APP_VERSION } from './version.js';
 
 const THUMB_SIZE = 360;
 const SAVE_DELAY = 300;
@@ -58,6 +59,7 @@ const els = {
   busyText: $('#busy-text'),
   toast: $('#toast'),
   dropOverlay: $('#drop-overlay'),
+  version: $('#app-version'),
 };
 
 const store = await createSourceStore();
@@ -349,6 +351,14 @@ function render() {
 
   const cards = doc.pages.map((page, index) => renderCard(page, index, count));
   els.grid.replaceChildren(...cards);
+  placeVersion();
+}
+
+/** バージョン表示が下のバー（保存へ進む・書き出し）に隠れないよう、バーの高さだけ上げる */
+function placeVersion() {
+  const bar = [els.nextBar, els.exportBar].find((el) => !el.hidden && el.offsetHeight > 0 && getComputedStyle(el).position !== 'static');
+  document.body.classList.toggle('has-bottom-bar', Boolean(bar));
+  document.documentElement.style.setProperty('--bottom-bar', `${bar ? bar.offsetHeight : 0}px`);
 }
 
 function suggestedFileName() {
@@ -633,6 +643,9 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('pagehide', () => saveStateNow());
 
 // ---- 起動 ----
+
+els.version.textContent = `RelaPDF v${APP_VERSION}`;
+window.addEventListener('resize', placeVersion);
 
 await restoreState();
 applyMode(mode);
