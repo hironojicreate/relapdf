@@ -31,27 +31,33 @@ async function download(page, trigger) {
   return { name: file.suggestedFilename(), bytes: new Uint8Array(await readFile(await file.path())) };
 }
 
-/** ツールのダイアログで作ったファイルを受け取る */
+/** ツールのダイアログで作ったファイルを受け取る（詳細モードは、作ったらすぐにダウンロードする） */
 async function runTool(page) {
-  await page.click('#tool-submit');
-  await expect(page.locator('#result-dialog')).toBeVisible({ timeout: 20_000 });
-  return download(page, () => page.click('[data-action="download"]'));
+  const file = await download(page, () => page.click('#tool-submit'));
+  await expect(page.locator('#result-dialog')).toBeHidden();
+  return file;
 }
 
 const pngWidth = (bytes) => new DataView(bytes.buffer, bytes.byteOffset).getUint32(16);
 
-test('クリック・Shift・Ctrl でページを選び、選択を外せる', async ({ page }) => {
+test('クリックするたびに選ぶ・外すが切り替わる。Shift で範囲、すべて選択してから1枚だけ外せる', async ({ page }) => {
   await openFiles(page);
   await expect(page.locator('#selection-count')).toContainText('クリックで選択');
   await cards(page).nth(1).click();
   expect(await selectedCount(page)).toBe(1);
   await cards(page).nth(3).click({ modifiers: ['Shift'] });
   expect(await selectedCount(page)).toBe(3); // 2〜4
-  await cards(page).nth(0).click({ modifiers: ['ControlOrMeta'] });
+  await cards(page).nth(0).click(); // 押すと追加
   expect(await selectedCount(page)).toBe(4);
-  await cards(page).nth(2).click({ modifiers: ['ControlOrMeta'] });
+  await cards(page).nth(2).click(); // もう一度押すと外れる
   expect(await selectedCount(page)).toBe(3);
   await expect(page.locator('#selection-count')).toHaveText('3 / 5 ページを選択中');
+
+  // すべて選択してから、1枚だけ外す
+  await page.click('#select-all');
+  await cards(page).nth(4).click();
+  expect(await selectedCount(page)).toBe(4);
+  await expect(cards(page).nth(4)).not.toHaveClass(/selected/);
 
   await page.keyboard.press('Escape');
   expect(await selectedCount(page)).toBe(0);
@@ -68,6 +74,32 @@ test('クリック・Shift・Ctrl でページを選び、選択を外せる', a
   await cards(page).nth(4).locator('.select-box').click();
   await cards(page).nth(3).locator('.select-box').click();
   expect(await selectedCount(page)).toBe(2);
+});
+
+test('ページのない所からドラッグすると、青い四角で囲んだページをまとめて選ぶ', async ({ page }) => {
+  await openFiles(page);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const first = await cards(page).nth(0).boundingBox();
+  const third = await cards(page).nth(2).boundingBox();
+  // 1枚目の左上の外側から、3枚目の中ほどまで囲む
+  await page.mouse.move(first.x - 8, first.y - 8);
+  await page.mouse.down();
+  await page.mouse.move(third.x + third.width / 2, third.y + third.height / 2, { steps: 8 });
+  await expect(page.locator('.marquee')).toBeVisible();
+  expect(await selectedCount(page)).toBe(3);
+  await page.mouse.up();
+  await expect(page.locator('.marquee')).toBeHidden();
+  expect(await selectedCount(page)).toBe(3); // 離したあとのクリックで外れない
+
+  // Shift を押しながら囲むと、今の選択に付け足す
+  const fifth = await cards(page).nth(4).boundingBox();
+  await page.keyboard.down('Shift');
+  await page.mouse.move(fifth.x + fifth.width + 6, fifth.y - 6);
+  await page.mouse.down();
+  await page.mouse.move(fifth.x + fifth.width / 2, fifth.y + fifth.height / 2, { steps: 5 });
+  await page.mouse.up();
+  await page.keyboard.up('Shift');
+  expect(await selectedCount(page)).toBe(4);
 });
 
 test('選んだページをまとめて回転・削除でき、削除は元に戻せる', async ({ page }) => {
@@ -146,7 +178,6 @@ test('分割：ページ範囲ごと・決まったページ数ずつ。範囲�
   expect(Object.keys(files).sort()).toEqual(['資料_1-2.pdf', '資料_3-5.pdf']);
   expect((await PDFDocument.load(files['資料_3-5.pdf'])).getPageCount()).toBe(3);
 
-  await page.click('[data-action="close-result"]:visible');
   await page.click('[data-action="open-split"]');
   await page.locator('input[name="split-mode"][value="every"]').check();
   await page.fill('#split-every', '2');
@@ -163,7 +194,6 @@ test('画像にする：1枚ならそのまま、複数ならZIP。解像度を�
   expect(single.name).toBe('scan_01.jpg');
   expect([single.bytes[0], single.bytes[1]]).toEqual([0xff, 0xd8]); // JPEG
 
-  await page.click('[data-action="close-result"]:visible');
   await page.click('[data-action="open-images"]');
   await page.fill('#images-range', '1-3');
   await page.selectOption('#images-format', 'png');
@@ -174,7 +204,6 @@ test('画像にする：1枚ならそのまま、複数ならZIP。解像度を�
   expect(pngWidth(files['scan_01.png'])).toBe(1240); // A4縦（595pt）を150dpiで
   expect(pngWidth(files['scan_02.png'])).toBe(1754); // 横向きのページ
 
-  await page.click('[data-action="close-result"]:visible');
   await page.click('[data-action="open-images"]');
   await page.fill('#images-range', '1');
   await page.selectOption('#images-format', 'png');

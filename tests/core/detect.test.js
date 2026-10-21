@@ -107,3 +107,48 @@ test('大津の方法と凸包', () => {
   ]);
   assert.equal(hull.length, 4);
 });
+
+// 木目の机（オレンジ系）の上に、色の多い表紙（白地に、机と同じくらいの明るさの絵）を置いた絵
+function colorfulCover({ width = 300, height = 400, quad, seed = 7 }) {
+  const data = new Uint8ClampedArray(width * height * 4);
+  let s = seed;
+  const rand = () => ((s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  const inside = (x, y) => {
+    for (let i = 0; i < 4; i++) {
+      const a = quad[i];
+      const b = quad[(i + 1) % 4];
+      if ((b.x - a.x) * (y - a.y) - (b.y - a.y) * (x - a.x) < 0) return false;
+    }
+    return true;
+  };
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      // 木目：横じまの濃淡とノイズ
+      const grain = Math.sin(y / 3 + Math.sin(x / 40) * 2) * 18 + (rand() - 0.5) * 16;
+      let rgb = [175 + grain, 112 + grain * 0.7, 45 + grain * 0.4];
+      if (inside(x + 0.5, y + 0.5)) {
+        const u = (x - quad[0].x) / (quad[1].x - quad[0].x);
+        const v = (y - quad[0].y) / (quad[3].y - quad[0].y);
+        rgb = [240, 238, 232];
+        // 大きな題字（ピンク）と、絵（いろいろな色）。端の近くまである
+        if (v > 0.12 && v < 0.32 && u > 0.1 && u < 0.9 && (Math.floor(u * 12) + Math.floor(v * 10)) % 3) rgb = [228, 96, 128];
+        if (v > 0.4 && v < 0.88 && u > 0.03 && u < 0.97) {
+          const k = (Math.floor(u * 9) * 7 + Math.floor(v * 11) * 3) % 5;
+          rgb = [[60, 90, 160], [200, 120, 60], [120, 160, 90], [170, 70, 60], [240, 238, 232]][k];
+        }
+      }
+      data.set([...rgb, 255], (y * width + x) * 4);
+    }
+  }
+  return { data, width, height };
+}
+
+test('木目の机の上の、色の多い表紙（絵と机の明るさが近い）でも見つける', () => {
+  const cover = [
+    { x: 30, y: 25 },
+    { x: 275, y: 30 },
+    { x: 270, y: 345 },
+    { x: 25, y: 340 },
+  ];
+  assertCorners(detectDocument(colorfulCover({ quad: cover })), cover, 300, 400, 0.03);
+});

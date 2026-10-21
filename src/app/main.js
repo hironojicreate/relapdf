@@ -31,6 +31,7 @@ import { setupUpdater } from '../web/updater.js';
 import { setupInstall } from '../web/install.js';
 import { createCameraView } from './camera-view.js';
 import { enableDragReorder } from './drag.js';
+import { enableMarqueeSelect } from './marquee.js';
 import { createPerspectiveEditor } from './perspective-editor.js';
 import { createStepHistory } from './navigation.js';
 import { createToolsDialog } from './tools-dialog.js';
@@ -406,9 +407,18 @@ async function createPdf() {
   }
 }
 
-/** できたファイルを「送る・保存する」「ダウンロード」のダイアログで渡す */
+/**
+ * できたファイルを渡す。
+ * かんたんモード：「送る・保存する」「ダウンロード」のダイアログを出す
+ * 詳細モード：すぐにダウンロードする（送る機能は、必要になったら追加する）
+ */
 function deliver(blob, fileName, { title, summary }) {
   lastExport = { blob, fileName, title, summary };
+  if (mode === 'detail') {
+    downloadBlob(blob, fileName);
+    toast(`「${fileName}」をダウンロードしました（${summary}・${formatBytes(blob.size)}）`, 'info', { duration: 4000 });
+    return;
+  }
   showResult();
 }
 
@@ -443,7 +453,10 @@ async function shareResult() {
     return;
   }
   // 共有シートを閉じただけ（キャンセル）のときは、そのまま選び直せるようにする
-  if (result === 'shared') showDone('完了しました', `「${lastExport.fileName}」を送りました`);
+  // 実際に送るのは、共有シートで選んだアプリ（LINE・メールなど）。送れたかどうかは、このアプリからは分からない
+  if (result === 'shared') {
+    showDone('完了しました', `「${lastExport.fileName}」を、選んだアプリに渡しました。送れたかどうかは、そのアプリで確かめてください`);
+  }
 }
 
 function downloadResult() {
@@ -581,7 +594,7 @@ function placeVersion() {
 function renderSelectionBar(count) {
   const n = selected.size;
   els.selectionCount.textContent =
-    n === 0 ? 'クリックで選択（Shift・Ctrl で複数）、ダブルクリックで拡大' : `${n} / ${count} ページを選択中`;
+    n === 0 ? 'クリックで選択・解除（囲んでまとめて選択）、ダブルクリックで拡大' : `${n} / ${count} ページを選択中`;
   els.selectAllButton.textContent = n === count && count > 0 ? '選択を解除' : 'すべて選択';
   for (const button of document.querySelectorAll('[data-needs-selection]')) button.disabled = n === 0;
 }
@@ -605,19 +618,18 @@ function selectedIds() {
   return doc.pages.filter((p) => selected.has(p.id)).map((p) => p.id);
 }
 
-/** クリックでページを選ぶ（詳細モード）。Shift で範囲、Ctrl/⌘ で追加・解除 */
-function selectByClick(pageId, { shift, toggle }) {
+/**
+ * クリックでページを選ぶ（詳細モード）。押すたびに選ぶ・外すが切り替わる。
+ * Shift を押しながらだと、前に押したページからそのページまでをまとめて選ぶ。
+ */
+function selectByClick(pageId, { shift = false } = {}) {
   const ids = doc.pages.map((p) => p.id);
   if (shift && selectionAnchor && ids.includes(selectionAnchor)) {
     const [a, b] = [ids.indexOf(selectionAnchor), ids.indexOf(pageId)].sort((x, y) => x - y);
-    if (!toggle) selected.clear();
     for (const id of ids.slice(a, b + 1)) selected.add(id);
-  } else if (toggle) {
+  } else {
     if (selected.has(pageId)) selected.delete(pageId);
     else selected.add(pageId);
-    selectionAnchor = pageId;
-  } else {
-    selected = new Set([pageId]);
     selectionAnchor = pageId;
   }
   refreshSelection();
@@ -966,7 +978,7 @@ function onPageOp(op, pageId) {
       deletePages([pageId]);
       break;
     case 'select':
-      selectByClick(pageId, { shift: false, toggle: true });
+      selectByClick(pageId);
       return;
     case 'perspective':
       openEditor(pageId);
@@ -1021,7 +1033,16 @@ enableDragReorder(els.grid, (pageId, insertBefore) => {
 els.grid.addEventListener('click', (event) => {
   if (mode !== 'detail' || event.target.closest('button')) return;
   const card = event.target.closest('.page-card');
-  if (card) selectByClick(card.dataset.id, { shift: event.shiftKey, toggle: event.ctrlKey || event.metaKey });
+  if (card) selectByClick(card.dataset.id, { shift: event.shiftKey });
+});
+// 詳細モード：ページのない所からマウスでドラッグすると、青い四角に入ったページをまとめて選ぶ
+enableMarqueeSelect(document.body, {
+  enabled: () => mode === 'detail' && doc.pages.length > 0 && !els.workspace.hidden && !editor.isOpen() && !camera.isOpen(),
+  cards: () => [...els.grid.querySelectorAll('.page-card')],
+  onSelect: (ids, { add }) => {
+    selected = new Set(add ? [...selected, ...ids] : ids);
+    refreshSelection();
+  },
 });
 els.grid.addEventListener('dblclick', (event) => {
   if (mode !== 'detail' || event.target.closest('button')) return;

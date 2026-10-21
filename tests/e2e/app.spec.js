@@ -30,10 +30,18 @@ async function exportAndDownload(page) {
   // かんたんモードでは「保存へ進む」で3番目の段階に進んでから作成する
   const goSave = page.locator('[data-action="go-save"]');
   if (await goSave.isVisible()) await goSave.click();
-  await page.click('[data-action="export"]:visible');
-  await expect(page.locator('#result-dialog')).toBeVisible();
-  const [download] = await Promise.all([page.waitForEvent('download'), page.click('[data-action="download"]')]);
-  await expect(page.locator('#done-title')).toHaveText('保存しました');
+  let download;
+  if (await page.evaluate(() => document.body.classList.contains('mode-detail'))) {
+    // 詳細モードは、作成したらすぐにダウンロードする
+    [download] = await Promise.all([page.waitForEvent('download'), page.click('[data-action="export"]:visible')]);
+    await expect(page.locator('#toast')).toContainText('ダウンロードしました');
+    await expect(page.locator('#result-dialog')).toBeHidden();
+  } else {
+    await page.click('[data-action="export"]:visible');
+    await expect(page.locator('#result-dialog')).toBeVisible();
+    [download] = await Promise.all([page.waitForEvent('download'), page.click('[data-action="download"]')]);
+    await expect(page.locator('#done-title')).toHaveText('保存しました');
+  }
   const bytes = await readFile(await download.path());
   return { name: download.suggestedFilename(), pdf: await PDFDocument.load(bytes) };
 }
@@ -158,7 +166,7 @@ test('一度開けば、オフラインでも起動してPDFを読み込める',
   expect(pdf.getPageCount()).toBe(3);
 });
 
-test('送る（共有シート）が終わったら「完了しました」と表示し、新しく作り直せる', async ({ page }, testInfo) => {
+test('かんたんモード：送る（共有シート）が終わったら「完了しました」と表示し、新しく作り直せる', async ({ page }, testInfo) => {
   // 共有シートの代わり：1回目はキャンセル、2回目は成功したことにする
   await page.addInitScript(() => {
     let calls = 0;
@@ -169,6 +177,7 @@ test('送る（共有シート）が終わったら「完了しました」と�
     };
   });
   await page.goto('./');
+  await page.click('[data-mode="easy"]'); // 詳細モードには「送る」がない（すぐにダウンロードする）
   await addFiles(page, [fixture('photo-landscape.jpg')], testInfo);
   await expect(cards(page)).toHaveCount(1);
   const goSave = page.locator('[data-action="go-save"]');
@@ -183,7 +192,7 @@ test('送る（共有シート）が終わったら「完了しました」と�
   await page.click('[data-action="share"]');
   await expect(page.locator('#result-done')).toBeVisible();
   await expect(page.locator('#done-title')).toHaveText('完了しました');
-  await expect(page.locator('#done-meta')).toContainText('を送りました');
+  await expect(page.locator('#done-meta')).toContainText('選んだアプリに渡しました');
 
   await page.click('[data-action="new-document"]');
   await expect(page.locator('#result-dialog')).toBeHidden();

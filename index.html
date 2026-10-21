@@ -207,6 +207,11 @@ body.mode-detail .thumb { cursor: grab; }
 }
 .page-grid.is-dragging { user-select: none; -webkit-user-select: none; }
 /* 落ちる場所の目印：太い線と「○番目へ」 */
+.marquee {
+  position: absolute; z-index: 25; pointer-events: none; border-radius: 4px;
+  border: 1.5px solid var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+body.is-marquee { user-select: none; -webkit-user-select: none; }
 .drop-marker {
   position: absolute; z-index: 25; width: 6px; margin-left: -3px; border-radius: 3px; pointer-events: none;
   background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);

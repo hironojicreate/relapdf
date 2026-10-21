@@ -1,11 +1,13 @@
 // 書類の四隅の自動検出（Core層）
 //
-// 机の上の書類のように「紙と背景の明るさが違う」写真から、紙の四隅を見つける。
-// 1. 明るさだけにして、少しぼかす（細かい模様や文字の影響を減らす）
-// 2. 大津の方法で明るい部分と暗い部分に分ける
-// 3. 明るい部分（紙）と暗い部分のそれぞれで、つながった大きなかたまりを探す
-// 4. かたまりの外形（凸包）に、いちばん大きく重なる四角形を当てはめる
-// 5. 四角形がかたまりとよく重なり、大きさも妥当なら、その四隅を返す（だめなら null）
+// 机の上の書類の写真から、紙の四隅を見つける。紙と机を分ける方法を2通り試し、いちばん四角形らしいものを選ぶ。
+// - 明るさで分ける：白い紙と暗い机のように、明るさが違うとき
+// - 机の色との違いで分ける：写真の外周（ほとんどが机）の色を「机の色」とし、それと違う色の所を紙とする。
+//   色の多い表紙や、絵と机の明るさが近いときでも、紙をひとかたまりで取り出せる
+// 分けたあとは、どちらも同じ手順：
+// 1. 紙の中の穴（文字や絵で抜けた所）を埋める
+// 2. つながった大きなかたまりを探し、外形（凸包）にいちばん大きく重なる四角形を当てはめる
+// 3. 四角形がかたまりとよく重なり、大きさも妥当なら、その四隅を返す（だめなら null）
 //
 // 画像は縮小してから渡す（長辺400px程度）。{ data: RGBA, width, height } の形。
 // OpenCV.js（約8〜10MB）を使わず、数KBで動くようにしている。
@@ -19,6 +21,9 @@ const MIN_AREA = 0.2; // 画像に対する紙の面積の下限（小さな四�
 const MAX_AREA = 0.98; // これより大きいときは「写真全体が紙」とみなして補正しない
 const MIN_FILL = 0.85; // かたまりと四角形の重なり具合の下限
 const MIN_CONTRAST = 40; // 紙と背景の明るさの差の下限（ムラのある机を紙と間違えないため）
+const MIN_COLOR_CONTRAST = 45; // 机の色との違いで分けるときの、紙と机の差の下限
+const RING = 0.03; // 「机の色」を調べる外周の幅（短辺に対する割合）
+const MIN_DESK_THRESHOLD = 28; // 机の色との違いがこれより小さい所は、机とみなす
 const BORDER = 2; // 画像の端からこの距離（px）以内は「端に接している」とみなす
 const INSET = 1.5; // 机が細く写り込まないよう、四隅を内側に寄せる量（px）
 
@@ -31,21 +36,93 @@ const INSET = 1.5; // 机が細く写り込まないよう、四隅を内側に�
 export function detectDocument(image) {
   const { width, height } = image;
   if (width < 16 || height < 16) return null;
+  const masks = [];
+
+  // 明るさで分ける：明るい紙（よくある場合）と、暗い紙（白い机の上など）の両方
   const gray = blur(toGray(image), width, height);
   const threshold = otsuThreshold(gray);
-  if (classContrast(gray, threshold) < MIN_CONTRAST) return null;
+  if (classContrast(gray, threshold) >= MIN_CONTRAST) {
+    for (const bright of [true, false]) {
+      const mask = new Uint8Array(width * height);
+      for (let i = 0; i < mask.length; i++) mask[i] = (gray[i] > threshold) === bright ? 1 : 0;
+      masks.push(mask);
+    }
+  }
+
+  // 机の色との違いで分ける。境目は、大津の方法と「外周（机）の色のばらつき」の小さい方にする
+  // （灰色っぽい紙や影の部分が、机の側に入ってしまわないように）
+  const { distance, deskSpread } = backgroundDistance(image);
+  const t = Math.min(otsuThreshold(distance), Math.max(MIN_DESK_THRESHOLD, deskSpread * 1.5 + 8));
+  if (classContrast(distance, t) >= MIN_COLOR_CONTRAST) {
+    const mask = new Uint8Array(width * height);
+    for (let i = 0; i < mask.length; i++) mask[i] = distance[i] > t ? 1 : 0;
+    masks.push(mask);
+  }
 
   let best = null;
-  // 明るい紙（よくある場合）と、暗い紙（白い机の上など）の両方を試す
-  for (const bright of [true, false]) {
-    const mask = new Uint8Array(width * height);
-    for (let i = 0; i < mask.length; i++) mask[i] = (gray[i] > threshold) === bright ? 1 : 0;
+  for (const mask of masks) {
+    fillHoles(mask, width, height);
     for (const component of components(mask, width, height)) {
       const candidate = fitQuad(component, width, height);
       if (candidate && (!best || candidate.score > best.score)) best = candidate;
     }
   }
   return best;
+}
+
+/**
+ * 各画素が「机の色」からどれだけ違うか（0〜255）。
+ * 机の色は、写真の外周の帯の色の中央値（紙が少し外周にかかっていても、ほとんどは机なので影響しない）。
+ * deskSpread は、外周の帯の中での違いの大きさ（90%の画素がこれ以下）。木目などのばらつきの目安
+ */
+function backgroundDistance(image) {
+  const { width, height } = image;
+  const channels = [0, 1, 2].map((c) => {
+    const plane = new Uint8ClampedArray(width * height);
+    for (let i = 0, j = c; i < plane.length; i++, j += 4) plane[i] = image.data[j];
+    return blur(plane, width, height);
+  });
+  const ring = Math.max(2, Math.round(Math.min(width, height) * RING));
+  const samples = [[], [], []];
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (x >= ring && x < width - ring && y >= ring && y < height - ring) continue;
+      const i = y * width + x;
+      for (let c = 0; c < 3; c++) samples[c].push(channels[c][i]);
+    }
+  }
+  const desk = samples.map((values) => [...values].sort((a, b) => a - b)[values.length >> 1]);
+  const distance = new Uint8ClampedArray(width * height);
+  for (let i = 0; i < distance.length; i++) {
+    distance[i] = Math.hypot(channels[0][i] - desk[0], channels[1][i] - desk[1], channels[2][i] - desk[2]);
+  }
+  const ringDistances = samples[0]
+    .map((_, k) => Math.hypot(samples[0][k] - desk[0], samples[1][k] - desk[1], samples[2][k] - desk[2]))
+    .sort((a, b) => a - b);
+  return { distance, deskSpread: ringDistances[Math.floor(ringDistances.length * 0.9)] };
+}
+
+/** 紙の中の穴（外周につながっていない、紙でない所）を埋める（配列を書き換える） */
+function fillHoles(mask, width, height) {
+  const outside = new Uint8Array(mask.length);
+  const stack = [];
+  const push = (i) => {
+    if (!mask[i] && !outside[i]) {
+      outside[i] = 1;
+      stack.push(i);
+    }
+  };
+  for (let x = 0; x < width; x++) push(x), push((height - 1) * width + x);
+  for (let y = 0; y < height; y++) push(y * width), push(y * width + width - 1);
+  while (stack.length) {
+    const i = stack.pop();
+    const x = i % width;
+    if (x > 0) push(i - 1);
+    if (x < width - 1) push(i + 1);
+    if (i >= width) push(i - width);
+    if (i < mask.length - width) push(i + width);
+  }
+  for (let i = 0; i < mask.length; i++) if (!outside[i]) mask[i] = 1;
 }
 
 /** 明るさ（0〜255）だけにする */
@@ -165,15 +242,15 @@ function components(mask, width, height) {
     labels[start] = label;
     stack.push(start);
     let area = 0;
-    const rowMin = new Map();
-    const rowMax = new Map();
+    const rowMin = new Int32Array(height).fill(width);
+    const rowMax = new Int32Array(height).fill(-1);
     while (stack.length) {
       const i = stack.pop();
       area += 1;
       const x = i % width;
       const y = (i - x) / width;
-      if (!rowMin.has(y) || x < rowMin.get(y)) rowMin.set(y, x);
-      if (!rowMax.has(y) || x > rowMax.get(y)) rowMax.set(y, x);
+      if (x < rowMin[y]) rowMin[y] = x;
+      if (x > rowMax[y]) rowMax[y] = x;
       if (x > 0 && mask[i - 1] && !labels[i - 1]) (labels[i - 1] = label), stack.push(i - 1);
       if (x < width - 1 && mask[i + 1] && !labels[i + 1]) (labels[i + 1] = label), stack.push(i + 1);
       if (y > 0 && mask[i - width] && !labels[i - width]) (labels[i - width] = label), stack.push(i - width);
@@ -181,8 +258,10 @@ function components(mask, width, height) {
     }
     if (area < minArea) continue;
     const points = [];
-    for (const [y, x] of rowMin) points.push({ x, y });
-    for (const [y, x] of rowMax) points.push({ x: x + 1, y });
+    for (let y = 0; y < height; y++) {
+      if (rowMax[y] < 0) continue;
+      points.push({ x: rowMin[y], y }, { x: rowMax[y] + 1, y });
+    }
     result.push({ area, points });
   }
   return result;
