@@ -15,6 +15,7 @@ import {
   removePages,
   rotatePages,
   serializeDocument,
+  setFilter,
   setPerspective,
 } from '../core/page-list.js';
 import { exportPdf, inspectPdf } from '../core/pdf-export.js';
@@ -25,6 +26,7 @@ import { imageThumbnailUrl, loadImageFile, prepareImageForExport } from '../web/
 import { closePdf, pdfThumbnailUrl } from '../web/pdf-view.js';
 import { canShareFiles, downloadBlob, shareBlob } from '../web/save.js';
 import { currentMode, saveMode } from '../web/mode.js';
+import { loadDocumentMode } from '../web/document-mode.js';
 import { setupUpdater } from '../web/updater.js';
 import { setupInstall } from '../web/install.js';
 import { createCameraView } from './camera-view.js';
@@ -230,13 +232,17 @@ async function addFile(current, file) {
     return addSourceWithBlob(current, source, file);
   }
   if (isImage(file)) {
-    return addImage(current, await loadImageFile(file), file.name);
+    const image = await loadImageFile(file);
+    // かんたんモードで書類の写真を取り込んだときは、書類モードも付ける（設定がオンのとき）
+    if (image.corners && mode === 'easy' && loadDocumentMode()) image.filter = 'document';
+    return addImage(current, image, file.name);
   }
   throw new Error('対応していないファイルです（PDFか画像を選んでください）');
 }
 
 /**
  * 写真をページに加える。書類の四隅が見つかっていれば、4点補正を自動でかける。
+ * image.filter があれば、その色補正（書類モード）も付ける。
  */
 async function addImage(current, image, name) {
   const source = {
@@ -247,10 +253,11 @@ async function addImage(current, image, name) {
     width: image.width,
     height: image.height,
   };
-  const next = await addSourceWithBlob(current, source, image.blob);
-  if (!image.corners) return next;
+  let next = await addSourceWithBlob(current, source, image.blob);
   const pageId = next.pages[next.pages.length - 1].id;
-  return setPerspective(next, pageId, { corners: image.corners, aspect: 'free' });
+  if (image.corners) next = setPerspective(next, pageId, { corners: image.corners, aspect: 'free' });
+  if (image.filter && image.filter !== 'none') next = setFilter(next, [pageId], image.filter);
+  return next;
 }
 
 /** 新しく加わったページのうち、自動で補正したもののID */
@@ -321,9 +328,9 @@ const camera = createCameraView({
 
 const editor = createPerspectiveEditor({
   getBlob: (page) => store.get(page.content.sourceId),
-  onApply: (pageId, perspective) => {
+  onApply: (pageId, perspective, filter) => {
     if (!doc.pages.some((p) => p.id === pageId)) return;
-    update(setPerspective(doc, pageId, perspective));
+    update(setFilter(setPerspective(doc, pageId, perspective), [pageId], filter));
     toast(perspective ? '補正しました' : '補正を外しました');
   },
 });
@@ -331,6 +338,21 @@ const editor = createPerspectiveEditor({
 function openEditor(pageId) {
   const page = doc.pages.find((p) => p.id === pageId);
   if (page?.content.type === 'image') editor.open(page);
+}
+
+/**
+ * 選んだ写真のページの書類モードを切り替える。
+ * すべて書類モードならすべて外し、そうでなければすべて書類モードにする。
+ */
+function toggleDocumentMode(ids) {
+  const targets = doc.pages.filter((p) => ids.includes(p.id) && p.content.type === 'image');
+  if (targets.length === 0) {
+    toast('書類モードは、写真のページだけに使えます');
+    return;
+  }
+  const on = !targets.every((p) => p.filter === 'document');
+  update(setFilter(doc, targets.map((p) => p.id), on ? 'document' : 'none'));
+  toast(on ? `${targets.length}ページを書類モードにしました` : `${targets.length}ページの書類モードを外しました`);
 }
 
 // ---- 書き出し ----
@@ -361,6 +383,7 @@ async function buildPdf(target, title, progress = showBusy) {
         quality,
         paper,
         perspective: page.perspective,
+        filter: page.filter,
       });
     },
   });
@@ -713,15 +736,15 @@ function iconButton(op, label, icon, disabled = false, extraClass = '') {
 // サムネイルは同時に作りすぎないよう、順番に作る（iPhoneのメモリ対策）
 let thumbnailQueue = Promise.resolve();
 function thumbnailFor(page) {
-  const { content, perspective } = page;
-  // 4点補正の内容が変われば、別のサムネイルとして作り直す
-  const key = `${content.sourceId}:${content.pageIndex}:${perspective ? JSON.stringify(perspective) : ''}`;
+  const { content, perspective, filter } = page;
+  // 4点補正や書類モードが変われば、別のサムネイルとして作り直す
+  const key = `${content.sourceId}:${content.pageIndex}:${perspective ? JSON.stringify(perspective) : ''}:${content.type === 'image' ? filter : ''}`;
   if (!thumbnails.has(key)) {
     const task = thumbnailQueue.then(async () => {
       if (!doc.sources[content.sourceId]) throw new Error('削除済みのページです');
       return content.type === 'pdf'
         ? pdfThumbnailUrl(content.sourceId, () => store.bytes(content.sourceId), content.pageIndex, THUMB_SIZE)
-        : imageThumbnailUrl(await store.get(content.sourceId), THUMB_SIZE, perspective);
+        : imageThumbnailUrl(await store.get(content.sourceId), THUMB_SIZE, { perspective, filter });
     });
     thumbnailQueue = task.catch(() => {});
     task.catch(() => thumbnails.delete(key));
@@ -901,6 +924,9 @@ function onAction(action) {
       break;
     case 'delete-selected':
       deletePages(selectedIds());
+      break;
+    case 'document-selected':
+      toggleDocumentMode(selectedIds());
       break;
     case 'open-extract':
       tools.open('extract');

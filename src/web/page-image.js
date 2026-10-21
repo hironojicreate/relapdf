@@ -1,7 +1,7 @@
 // ページを1枚の画像にする（PDF→画像の書き出し・大きなプレビュー用。ブラウザ側）
 //
 // - PDFのページ：PDF.js で、指定の解像度（dpi）で描く
-// - 写真のページ：4点補正と回転をかけて、元の大きさのまま
+// - 写真のページ：4点補正・書類モードと回転をかけて、元の大きさのまま
 // - 白紙のページ：白い画像
 
 import { renderPdfPage } from './pdf-view.js';
@@ -34,6 +34,7 @@ export async function renderPageImage(page, store, { dpi = 150, format = 'jpeg',
   if (content.type === 'image') {
     return renderImagePage(await store.get(content.sourceId), {
       perspective: page.perspective,
+      filter: page.filter,
       rotation: page.rotation,
       type,
       quality,

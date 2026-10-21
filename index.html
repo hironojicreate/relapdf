@@ -441,6 +441,7 @@ body.editor-open { overflow: hidden; }
   display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px;
   padding: 10px 16px calc(env(safe-area-inset-bottom, 0px) + 12px);
 }
+.editor-switches { display: flex; flex-wrap: wrap; gap: 0 20px; }
 .editor-actions { display: flex; gap: 4px; }
 .editor-actions .btn.subtle { color: #c5cdd9; padding: 0 10px; }
 .switch { display: inline-flex; align-items: center; gap: 10px; font-weight: 600; cursor: pointer; min-height: 44px; }
@@ -472,6 +473,13 @@ body.camera-open { overflow: hidden; }
   padding: 4px 14px; border-radius: 999px; background: rgba(0, 0, 0, .55);
   font-weight: 700; font-size: 15px;
 }
+.camera-chip {
+  position: absolute; right: 16px; top: calc(env(safe-area-inset-top, 0px) + 8px);
+  min-height: 36px; padding: 0 14px; border-radius: 999px; border: 1.5px solid rgba(255, 255, 255, .55);
+  background: rgba(0, 0, 0, .45); color: #fff; font: inherit; font-size: 14px; font-weight: 700; cursor: pointer;
+}
+.camera-chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); }
+.camera-chip[aria-pressed="true"]::before { content: "✓ "; }
 .camera-error {
   position: relative; margin: auto 24px; padding: 20px; border-radius: 16px;
   background: rgba(30, 34, 42, .92); text-align: center; display: grid; gap: 14px;
@@ -608,6 +616,7 @@ body.has-bottom-bar .app-version { bottom: calc(var(--bottom-bar, 0px) + 6px); }
       <button type="button" class="btn" data-action="select-all" id="select-all">すべて選択</button>
       <span class="selection-count" id="selection-count" aria-live="polite"></span>
       <span class="tool-group">
+        <button type="button" class="btn" data-action="document-selected" data-needs-selection title="選んだ写真のページの背景を白く・文字をくっきりさせる（もう一度押すと元に戻す）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/></svg>書類モード</button>
         <button type="button" class="btn" data-action="rotate-selected" data-needs-selection title="選んだページを右に回転"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>回転</button>
         <button type="button" class="btn danger-text" data-action="delete-selected" data-needs-selection title="選んだページを削除（Delete）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 13h10l1-13"/><path d="M9 7V4h6v3"/></svg>削除</button>
       </span>
@@ -660,6 +669,7 @@ body.has-bottom-bar .app-version { bottom: calc(var(--bottom-bar, 0px) + 6px); }
   <video id="camera-video" playsinline muted autoplay></video>
   <div class="camera-top">
     <span class="camera-count" id="camera-count" aria-live="polite">0枚</span>
+    <button type="button" class="camera-chip" id="camera-document" data-camera="document" aria-pressed="true" title="背景を白く・文字をくっきりさせる">書類モード</button>
   </div>
   <div id="camera-error" class="camera-error" hidden>
     <p id="camera-error-text"></p>
@@ -705,7 +715,10 @@ body.has-bottom-bar .app-version { bottom: calc(var(--bottom-bar, 0px) + 6px); }
     <div class="spinner editor-spinner"></div>
   </div>
   <div class="editor-bottom">
-    <label class="switch"><input type="checkbox" id="editor-a4"><span>A4比率に合わせる</span></label>
+    <div class="editor-switches">
+      <label class="switch"><input type="checkbox" id="editor-a4"><span>A4比率に合わせる</span></label>
+      <label class="switch"><input type="checkbox" id="editor-document"><span>書類モード</span></label>
+    </div>
     <div class="editor-actions">
       <button type="button" class="btn subtle" data-editor="detect">自動検出</button>
       <button type="button" class="btn subtle" data-editor="reset">位置を戻す</button>

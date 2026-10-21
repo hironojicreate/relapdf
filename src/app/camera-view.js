@@ -2,10 +2,12 @@
 //
 // シャッターを押すたびに1枚ずつ写真にして、呼び出し元に渡す（連続撮影）。
 // 「完了」を押すと、渡した写真の処理が終わるのを待ってから閉じる。
+// 「書類モード」がオンのときは、撮った写真に書類モード（背景を白く・文字をくっきり）を付けて渡す。
 
 import { CameraError, applyCameraZoom, captureFrame, startCamera, stopCamera, zoomCapability } from '../web/camera.js';
 import { brightnessFactor } from '../core/color.js';
 import { clampZoom, pinchDistance, visibleVideoRegion } from '../web/zoom.js';
+import { loadDocumentMode, saveDocumentMode } from '../web/document-mode.js';
 
 const DIGITAL_ZOOM_MAX = 4; // カメラ自体がズームできないときの、拡大の上限（これ以上は粗くなる）
 const HARDWARE_ZOOM_MAX = 10;
@@ -14,8 +16,8 @@ const BRIGHTNESS_KEY = 'relapdf:camera-brightness';
 
 /**
  * @param {object} options
- * @param {(frame: {blob: Blob, width: number, height: number}, number: number) => Promise<string>} options.onCapture
- *   撮った写真を渡す。追加したページのIDを返す
+ * @param {(frame: {blob: Blob, width: number, height: number, corners: object[]|null, filter: string}, number: number) => Promise<string>} options.onCapture
+ *   撮った写真を渡す（corners は見つけた書類の四隅、filter は色補正）。追加したページのIDを返す
  * @param {(pageId: string) => Promise<void>} options.onUndo 「最後の1枚を取り消す」を押したとき
  * @param {() => void} options.onDone 「完了」で閉じたとき
  * @param {() => void} options.onUseOsCamera 「端末のカメラで撮る」を押したとき
@@ -35,6 +37,7 @@ export function createCameraView({ onCapture, onUndo, onDone, onUseOsCamera, onB
   const brightnessLabel = $('#camera-brightness-value');
   const zoomInput = $('#camera-zoom');
   const zoomLabel = $('#camera-zoom-value');
+  const documentButton = $('#camera-document');
 
   let stream = null;
   let shots = []; // この撮影で撮った写真 { url, pageId: Promise<string> }
@@ -138,6 +141,14 @@ export function createCameraView({ onCapture, onUndo, onDone, onUseOsCamera, onB
   } catch {
     setBrightness(0, false);
   }
+  let documentMode = loadDocumentMode();
+  function setDocumentMode(on, remember = true) {
+    documentMode = on;
+    documentButton.setAttribute('aria-pressed', String(on));
+    if (remember) saveDocumentMode(on);
+  }
+  setDocumentMode(documentMode, false);
+
   brightnessInput.addEventListener('input', () => setBrightness(Number(brightnessInput.value)));
 
   function isOpen() {
@@ -217,6 +228,7 @@ export function createCameraView({ onCapture, onUndo, onDone, onUseOsCamera, onB
     navigator.vibrate?.(15);
     try {
       const frame = await captureFrame(video, { brightness, region: captureRegion() });
+      frame.filter = documentMode ? 'document' : 'none';
       const number = shots.length + 1;
       pending = pending.then(() => onCapture(frame, number)).catch((error) => {
         console.error(error);
@@ -266,6 +278,7 @@ export function createCameraView({ onCapture, onUndo, onDone, onUseOsCamera, onB
     else if (action === 'brightness-reset') setBrightness(0);
     else if (action === 'zoom-reset') setZoom(zoomRange().min);
     else if (action === 'undo') undoLast();
+    else if (action === 'document') setDocumentMode(!documentMode);
     else if (action === 'os-camera') {
       close();
       onUseOsCamera();

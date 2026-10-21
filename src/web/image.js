@@ -5,6 +5,7 @@
 
 import { MAX_SOURCE_LONG_SIDE, fitLongSide, targetImageSize } from '../core/layout.js';
 import { outputSize, toPixels, warpPerspective } from '../core/perspective.js';
+import { applyDocumentFilter } from '../core/color.js';
 import { detectCorners } from './detect-image.js';
 
 /** 読み込めない画像形式のときのエラー */
@@ -47,6 +48,11 @@ export async function decodeImage(blob, name = '') {
  * 透明な部分は白にする（JPEGは透明を持てないため。黒くなるのを防ぐ）。
  */
 export async function encodeImage(source, width, height, { type = 'image/jpeg', quality = 0.92 } = {}) {
+  return canvasToBlob(drawResized(source, width, height), type, quality);
+}
+
+/** 白い下地の上に、画像を指定の大きさで描いた canvas を作る */
+function drawResized(source, width, height) {
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
@@ -56,6 +62,11 @@ export async function encodeImage(source, width, height, { type = 'image/jpeg', 
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(source, 0, 0, width, height);
+  return canvas;
+}
+
+/** canvas を画像ファイルにする。終わったら canvas のメモリを解放する */
+async function canvasToBlob(canvas, type = 'image/jpeg', quality = 0.92) {
   try {
     return await new Promise((resolve, reject) => {
       canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('画像を作れませんでした'))), type, quality);
@@ -85,26 +96,18 @@ export async function loadImageFile(file) {
 }
 
 /**
- * 4点補正をかけた画像を作る（ImageData を使って、Core の warpPerspective で引き伸ばす）。
+ * 4点補正をかけた canvas を作る（ImageData を使って、Core の warpPerspective で引き伸ばす）。
  * 縮小しすぎてギザギザにならないよう、先に元画像を出力に近い大きさまで縮めてから引き伸ばす。
- * @returns {Promise<Blob>}
  */
-async function encodeCorrected(decoded, perspective, width, height, quality) {
+function drawCorrected(decoded, perspective, width, height) {
   const cornersPx = toPixels(perspective.corners, decoded.width, decoded.height);
   const natural = outputSize(cornersPx, perspective.aspect);
   const k = Math.min(1, Math.max(width / natural.width, height / natural.height) * 1.25);
   const sw = Math.max(1, Math.round(decoded.width * k));
   const sh = Math.max(1, Math.round(decoded.height * k));
 
-  const canvas = document.createElement('canvas');
-  canvas.width = sw;
-  canvas.height = sh;
+  const canvas = drawResized(decoded.source, sw, sh);
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, sw, sh);
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(decoded.source, 0, 0, sw, sh);
   const src = ctx.getImageData(0, 0, sw, sh);
   const warped = warpPerspective(
     src,
@@ -115,14 +118,7 @@ async function encodeCorrected(decoded, perspective, width, height, quality) {
   canvas.width = width;
   canvas.height = height;
   ctx.putImageData(new ImageData(warped.data, width, height), 0, 0);
-  try {
-    return await new Promise((resolve, reject) => {
-      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('画像を作れませんでした'))), 'image/jpeg', quality);
-    });
-  } finally {
-    canvas.width = 0;
-    canvas.height = 0;
-  }
+  return canvas;
 }
 
 /** 4点補正をかけたあとの画像の大きさ（補正がなければ元のまま） */
@@ -132,19 +128,34 @@ function correctedSize(decoded, perspective) {
 }
 
 /**
- * 書き出し用の画像を作る。4点補正があればかけてから、画質の設定に合わせて縮小する。
+ * 写真のページを、指定の大きさの canvas に描く。
+ * 4点補正 → 縮小 → 色補正（書類モード）の順にかける。
+ * @param {{ perspective?: object|null, filter?: string }} page
+ */
+function drawPage(decoded, { perspective = null, filter = 'none' }, width, height) {
+  const canvas = perspective ? drawCorrected(decoded, perspective, width, height) : drawResized(decoded.source, width, height);
+  if (filter === 'document') {
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const image = ctx.getImageData(0, 0, width, height);
+    applyDocumentFilter(image);
+    ctx.putImageData(image, 0, 0);
+  }
+  return canvas;
+}
+
+/**
+ * 書き出し用の画像を作る。4点補正・書類モードをかけ、画質の設定に合わせて縮小する。
+ * @param {{ quality?: string, paper?: string, perspective?: object|null, filter?: string }} options
  * @returns {Promise<{bytes: Uint8Array, format: 'jpeg', width: number, height: number}>}
  *   width/height は補正後の画像の大きさ（用紙への配置の計算に使う）
  */
-export async function prepareImageForExport(blob, { quality = 'standard', paper = 'a4', perspective = null } = {}) {
+export async function prepareImageForExport(blob, { quality = 'standard', paper = 'a4', perspective = null, filter = 'none' } = {}) {
   const decoded = await decodeImage(blob);
   try {
-    // M5：色補正（書類モード）は、ここで縮小の前後に行う
     const size = correctedSize(decoded, perspective);
     const target = targetImageSize(size.width, size.height, quality, paper);
-    const jpeg = perspective
-      ? await encodeCorrected(decoded, perspective, target.width, target.height, target.jpegQuality)
-      : await encodeImage(decoded.source, target.width, target.height, { quality: target.jpegQuality });
+    const canvas = drawPage(decoded, { perspective, filter }, target.width, target.height);
+    const jpeg = await canvasToBlob(canvas, 'image/jpeg', target.jpegQuality);
     return {
       bytes: new Uint8Array(await jpeg.arrayBuffer()),
       format: 'jpeg',
@@ -156,40 +167,30 @@ export async function prepareImageForExport(blob, { quality = 'standard', paper 
   }
 }
 
-/** サムネイル用の小さな画像を作り、表示用のURLを返す（4点補正があれば反映する） */
-export async function imageThumbnailUrl(blob, maxSide, perspective = null) {
+/** サムネイル用の小さな画像を作り、表示用のURLを返す（4点補正・書類モードを反映する） */
+export async function imageThumbnailUrl(blob, maxSide, { perspective = null, filter = 'none' } = {}) {
   const decoded = await decodeImage(blob);
   try {
     const corrected = correctedSize(decoded, perspective);
     const size = fitLongSide(corrected.width, corrected.height, maxSide);
-    const thumb = perspective
-      ? await encodeCorrected(decoded, perspective, size.width, size.height, 0.8)
-      : await encodeImage(decoded.source, size.width, size.height, { quality: 0.8 });
-    return URL.createObjectURL(thumb);
+    const canvas = drawPage(decoded, { perspective, filter }, size.width, size.height);
+    return URL.createObjectURL(await canvasToBlob(canvas, 'image/jpeg', 0.8));
   } finally {
     decoded.close();
   }
 }
 
 /**
- * 画像のページを、1枚の画像ファイルにする（PDF→画像の書き出し用）。
- * 4点補正とユーザーの回転をかける。大きさは元データのまま（長辺は元データの上限まで）。
- * @param {{ perspective?: object|null, rotation?: number, type?: string, quality?: number, maxSide?: number }} options
+ * 画像のページを、1枚の画像ファイルにする（PDF→画像の書き出し・大きなプレビュー用）。
+ * 4点補正・書類モードとユーザーの回転をかける。大きさは元データのまま（長辺は元データの上限まで）。
+ * @param {{ perspective?: object|null, filter?: string, rotation?: number, type?: string, quality?: number, maxSide?: number }} options
  */
-export async function renderImagePage(blob, { perspective = null, rotation = 0, type = 'image/jpeg', quality = 0.92, maxSide } = {}) {
-  let source = blob;
-  if (perspective) {
-    const decoded = await decodeImage(blob);
-    try {
-      const size = correctedSize(decoded, perspective);
-      source = await encodeCorrected(decoded, perspective, size.width, size.height, 0.95);
-    } finally {
-      decoded.close();
-    }
-  }
-  const decoded = await decodeImage(source);
+export async function renderImagePage(blob, { perspective = null, filter = 'none', rotation = 0, type = 'image/jpeg', quality = 0.92, maxSide } = {}) {
+  const decoded = await decodeImage(blob);
   try {
-    const size = maxSide ? fitLongSide(decoded.width, decoded.height, maxSide) : { width: decoded.width, height: decoded.height };
+    const corrected = correctedSize(decoded, perspective);
+    const size = maxSide ? fitLongSide(corrected.width, corrected.height, maxSide) : corrected;
+    const page = drawPage(decoded, { perspective, filter }, size.width, size.height);
     const sideways = rotation === 90 || rotation === 270;
     const canvas = document.createElement('canvas');
     canvas.width = sideways ? size.height : size.width;
@@ -197,18 +198,12 @@ export async function renderImagePage(blob, { perspective = null, rotation = 0, 
     const ctx = canvas.getContext('2d');
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.imageSmoothingQuality = 'high';
     ctx.translate(canvas.width / 2, canvas.height / 2);
     ctx.rotate((rotation * Math.PI) / 180);
-    ctx.drawImage(decoded.source, -size.width / 2, -size.height / 2, size.width, size.height);
-    try {
-      return await new Promise((resolve, reject) =>
-        canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('画像を作れませんでした'))), type, quality),
-      );
-    } finally {
-      canvas.width = 0;
-      canvas.height = 0;
-    }
+    ctx.drawImage(page, -size.width / 2, -size.height / 2);
+    page.width = 0;
+    page.height = 0;
+    return await canvasToBlob(canvas, type, quality);
   } finally {
     decoded.close();
   }

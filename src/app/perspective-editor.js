@@ -3,6 +3,7 @@
 // 写真の上に四角形を表示し、四隅の丸（角）と辺の中点の丸をつまんで、書類の四隅に合わせてもらう。
 // つまんでいる間は、指で隠れる部分を拡大した「ルーペ」を表示する。
 // 画面にはページの回転をかけた向きで表示し、保存するときに回転前の座標に戻す。
+// 「書類モード」のスイッチで、そのページの色補正（背景を白く・文字をくっきり）も切り替えられる。
 // 書類の端が写真からはみ出していることもあるので、四隅は写真の外（画面の端まで）にも動かせる。
 // まだ補正していない写真は、自動で見つけた書類の四隅（見つからなければ少し内側）から始める。
 
@@ -21,7 +22,7 @@ const HINT = '書類の四隅に、丸を合わせてください';
 /**
  * @param {object} options
  * @param {(page: object) => Promise<Blob>} options.getBlob 写真の中身を返す
- * @param {(pageId: string, perspective: object|null) => void} options.onApply 「完了」「補正しない」を押したとき
+ * @param {(pageId: string, perspective: object|null, filter: string) => void} options.onApply 「完了」「補正しない」を押したとき
  */
 export function createPerspectiveEditor({ getBlob, onApply }) {
   const $ = (selector) => document.querySelector(selector);
@@ -31,6 +32,7 @@ export function createPerspectiveEditor({ getBlob, onApply }) {
   const overlay = $('#editor-overlay');
   const loupe = $('#editor-loupe');
   const a4Toggle = $('#editor-a4');
+  const documentToggle = $('#editor-document');
   const hint = root.querySelector('.editor-hint');
 
   let page = null;
@@ -48,6 +50,7 @@ export function createPerspectiveEditor({ getBlob, onApply }) {
     document.body.classList.add('editor-open');
     root.classList.add('loading');
     a4Toggle.checked = page.perspective?.aspect === 'a4';
+    documentToggle.checked = page.filter === 'document';
     hint.textContent = HINT;
     setCorners(page.perspective?.corners ?? defaultCorners());
     try {
@@ -289,15 +292,17 @@ export function createPerspectiveEditor({ getBlob, onApply }) {
       aspect: a4Toggle.checked ? 'a4' : 'free',
     };
     const id = page.id;
+    const filter = documentToggle.checked ? 'document' : 'none';
     close();
-    onApply(id, value);
+    onApply(id, value, filter);
   }
 
   function remove() {
     if (!page) return;
     const id = page.id;
+    const filter = documentToggle.checked ? 'document' : 'none';
     close();
-    onApply(id, null);
+    onApply(id, null, filter);
   }
 
   root.addEventListener('click', (event) => {

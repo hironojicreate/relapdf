@@ -1,6 +1,6 @@
 // このファイルは scripts/precache.js が自動で作ります。手で編集しないでください。
 self.RELAPDF_PRECACHE = {
-  "version": "0afef63c5e22",
+  "version": "e3e7717900db",
   "files": [
     "./",
     "./icons/apple-touch-icon.png",
@@ -30,6 +30,7 @@ self.RELAPDF_PRECACHE = {
     "./src/web/camera.js",
     "./src/web/canvas-util.js",
     "./src/web/detect-image.js",
+    "./src/web/document-mode.js",
     "./src/web/image.js",
     "./src/web/install.js",
     "./src/web/mode.js",

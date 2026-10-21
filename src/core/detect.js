@@ -20,6 +20,7 @@ const MAX_AREA = 0.98; // これより大きいときは「写真全体が紙」
 const MIN_FILL = 0.85; // かたまりと四角形の重なり具合の下限
 const MIN_CONTRAST = 40; // 紙と背景の明るさの差の下限（ムラのある机を紙と間違えないため）
 const BORDER = 2; // 画像の端からこの距離（px）以内は「端に接している」とみなす
+const INSET = 1.5; // 机が細く写り込まないよう、四隅を内側に寄せる量（px）
 
 /**
  * 書類の四隅を探す。
@@ -206,8 +207,15 @@ function fitQuad({ area, points }, width, height) {
   // かたまりの面積と四角形の面積が近いほど「四角い紙」らしい
   const fill = Math.min(area, quadArea) / Math.max(area, quadArea);
   if (fill < MIN_FILL) return null;
+  // 中心に向かって少しだけ寄せる（縮小した画像での1画素ぶんのずれで、机が線のように残らないように）
+  const cx = quad.reduce((sum, p) => sum + p.x, 0) / 4;
+  const cy = quad.reduce((sum, p) => sum + p.y, 0) / 4;
+  const inset = quad.map((p) => {
+    const d = Math.hypot(cx - p.x, cy - p.y) || 1;
+    return { x: p.x + ((cx - p.x) / d) * INSET, y: p.y + ((cy - p.y) / d) * INSET };
+  });
   return {
-    corners: quad.map((p) => ({ x: p.x / width, y: p.y / height })),
+    corners: inset.map((p) => ({ x: p.x / width, y: p.y / height })),
     score: fill * Math.sqrt(quadArea / imageArea),
   };
 }
