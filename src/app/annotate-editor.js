@@ -149,6 +149,7 @@ export function createAnnotator({ renderPage, getImageUrl, pickImage, onApply })
       switch (a.type) {
         case 'rect':
         case 'highlight':
+        case 'redact':
         case 'ellipse': {
           const x = a.x * W;
           const y = a.y * H;
@@ -158,7 +159,8 @@ export function createAnnotator({ renderPage, getImageUrl, pickImage, onApply })
             a.type === 'ellipse'
               ? el('ellipse', { cx: x + w / 2, cy: y + h / 2, rx: w / 2, ry: h / 2 })
               : el('rect', { x, y, width: w, height: h });
-          if (a.type === 'highlight') shape.setAttribute('fill', c), shape.setAttribute('fill-opacity', HIGHLIGHT_OPACITY);
+          if (a.type === 'redact') shape.setAttribute('fill', '#000');
+          else if (a.type === 'highlight') shape.setAttribute('fill', c), shape.setAttribute('fill-opacity', HIGHLIGHT_OPACITY);
           else shape.setAttribute('fill', 'transparent'), shape.setAttribute('stroke', c), shape.setAttribute('stroke-width', lw);
           g.append(shape);
           break;
@@ -260,7 +262,9 @@ export function createAnnotator({ renderPage, getImageUrl, pickImage, onApply })
         ? '注釈を押して選ぶと、動かしたり大きさを変えたりできます'
         : tool === 'text'
           ? '文字を置く場所を押してください'
-          : 'ページの上をなぞってください';
+          : tool === 'redact'
+            ? '隠す部分をなぞってください。墨消ししたページは、作成するときに画像になり、下の文字も消えます'
+            : 'ページの上をなぞってください';
     svg.style.cursor = tool === 'select' ? 'default' : 'crosshair';
   }
 
@@ -323,7 +327,8 @@ export function createAnnotator({ renderPage, getImageUrl, pickImage, onApply })
       return;
     }
     // 図形：なぞった範囲で作る
-    const a = { id: newId('ann'), type: tool, color: tool === 'highlight' ? 'yellow' : color };
+    const a = { id: newId('ann'), type: tool };
+    if (tool !== 'redact') a.color = tool === 'highlight' ? 'yellow' : color;
     if (tool === 'line' || tool === 'arrow') Object.assign(a, { x1: p.x / W, y1: p.y / H, x2: p.x / W, y2: p.y / H });
     else Object.assign(a, { x: p.x / W, y: p.y / H, w: 0, h: 0 });
     list.push(a);
@@ -533,6 +538,8 @@ export function createAnnotator({ renderPage, getImageUrl, pickImage, onApply })
     }
   });
   window.addEventListener('resize', layout);
+  // 説明の文字が折り返して、描く場所の大きさが変わったときも、位置を合わせ直す
+  new ResizeObserver(() => layout()).observe(stage);
 
   return { open, close, isOpen };
 }

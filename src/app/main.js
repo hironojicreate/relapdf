@@ -30,6 +30,7 @@ import {
   setProperties,
 } from '../core/page-list.js';
 import { describeMarks, hasMarks } from '../core/marks.js';
+import { hasRedactions } from '../core/annotations.js';
 import { COMPRESS_LEVELS } from '../core/compress.js';
 import { exportPdf, inspectPdf } from '../core/pdf-export.js';
 import { defaultFileName, sanitizeFileName, stripExtension } from '../core/filename.js';
@@ -58,7 +59,7 @@ import { cropFromDisplay, describeLayout } from '../core/imposition.js';
 import { createAnnotator } from './annotate-editor.js';
 import { createSignatureDialog } from './signature-dialog.js';
 import { createPreview } from './preview.js';
-import { renderPageImage } from '../web/page-image.js';
+import { IMAGE_FORMATS, renderPageImage } from '../web/page-image.js';
 import { APP_VERSION } from './version.js';
 
 const THUMB_SIZE = 360;
@@ -410,10 +411,12 @@ function baseFileName() {
  * ページリスト（またはその一部）をPDFにする。写真のページは用紙・画質の設定に合わせる。
  * @param {(text: string) => void} [progress] 進み具合の表示
  */
-async function buildPdf(target, title, progress = showBusy) {
+async function buildPdf(original, title, progress = showBusy) {
+  progress('PDFを作成中…');
+  // 墨消しのあるページは、画像にしたページに置き換える（黒く塗った下の文字のデータも消すため）
+  const { doc: target, images } = await rasterizeRedactions(original, progress);
   const imageTotal = target.pages.filter((p) => p.content.type === 'image').length;
   let imageDone = 0;
-  progress('PDFを作成中…');
   // PDFの圧縮（詳細モードだけ）。読み込んだPDFの中の大きな画像を縮小し直す
   const level = mode === 'detail' ? els.compress.value : 'none';
   const hasPdf = target.pages.some((p) => p.content.type === 'pdf');
@@ -433,10 +436,52 @@ async function buildPdf(target, title, progress = showBusy) {
     ...exportOptions(() => {
       imageDone += 1;
       progress(`PDFを作成中… ${imageDone} / ${imageTotal}`);
-    }),
+    }, images),
     title,
     compress,
   });
+}
+
+const REDACT_DPI = 200; // 墨消ししたページを画像にするときの細かさ
+
+/**
+ * 墨消しのあるページを、ページ全体を画像にしたページに置き換えたページリストを作る。
+ * 注釈（墨消しの黒い四角を含む）とフォーム入力をかけた1ページのPDFを、回転前の向きで画像にする。
+ * 画像にしたページは、元のページと同じ大きさ・回転・トリミングで書き出す。
+ * @returns {Promise<{doc: object, images: Map<string, object>}>} images は、置き換えたページの画像（仮の sourceId → 画像）
+ */
+async function rasterizeRedactions(target, progress) {
+  const pages = target.pages.filter(hasRedactions);
+  const images = new Map();
+  let next = target;
+  for (const [i, page] of pages.entries()) {
+    progress(`墨消ししたページを画像にしています… ${i + 1} / ${pages.length}`);
+    const one = { ...extractPages(target, [page.id]), marks: null, layout: null };
+    one.pages = one.pages.map(({ crop, ...p }) => ({ ...p, rotation: 0 }));
+    const bytes = await exportPdf(one, exportOptions());
+    const id = `redact-${++markPreviewCount}`;
+    let blob;
+    try {
+      blob = await renderPdfPage(id, async () => bytes, 0, { scale: REDACT_DPI / 72, type: 'image/jpeg', quality: 0.9 });
+    } finally {
+      closePdf(id);
+    }
+    const bitmap = await createImageBitmap(blob);
+    const size = { width: bitmap.width, height: bitmap.height };
+    bitmap.close();
+    const sourceId = `redacted_${page.id}`;
+    images.set(sourceId, {
+      bytes: new Uint8Array(await blob.arrayBuffer()),
+      format: 'jpeg',
+      ...size,
+      pageSize: { width: (size.width * 72) / REDACT_DPI, height: (size.height * 72) / REDACT_DPI },
+    });
+    next = addSource(next, { id: sourceId, kind: 'image', name: '墨消し', ...size });
+    const replaced = { ...page, content: { type: 'image', sourceId, pageIndex: 0 }, perspective: null, filter: 'none' };
+    delete replaced.annotations;
+    next = { ...next, pages: next.pages.map((p) => (p.id === page.id ? replaced : p)) };
+  }
+  return { doc: next, images };
 }
 
 /** 最後に作ったPDFで、圧縮した画像の数と大きさ（お知らせに使う） */
@@ -450,7 +495,7 @@ function compressionSummary() {
 }
 
 /** 書き出しの設定（用紙・画質）と、中身の取り出し方 */
-function exportOptions(onImage = () => {}) {
+function exportOptions(onImage = () => {}, readyImages = new Map()) {
   const paper = els.paper.value;
   const quality = els.quality.value;
   return {
@@ -458,6 +503,8 @@ function exportOptions(onImage = () => {}) {
     getSourceBytes: (sourceId) => store.bytes(sourceId),
     getImage: async (page) => {
       onImage();
+      // 墨消しで画像にしたページは、できている画像をそのまま使う
+      if (readyImages.has(page.content.sourceId)) return readyImages.get(page.content.sourceId);
       return prepareImageForExport(await store.get(page.content.sourceId), {
         quality,
         paper,
@@ -600,7 +647,7 @@ const marksDialog = createMarksDialog({
   // 見本：1ページだけPDFにして、画像にする（表紙を数えないときは2ページ目）
   renderPreview: async (marks) => {
     const index = marks.pageNumber.enabled && marks.pageNumber.skipFirst && doc.pages.length > 1 ? 1 : 0;
-    const blob = await renderAsExported(doc.pages[index], 900, marks);
+    const blob = await renderAsExported(doc.pages[index], { maxSide: 900, marks });
     return { url: URL.createObjectURL(blob), pageNumber: index + 1 };
   },
 });
@@ -609,14 +656,14 @@ const marksDialog = createMarksDialog({
  * 1ページだけ実際にPDFにして、画像にする（書き出したときと同じ見た目の見本）。
  * 書き込み・注釈・フォーム入力も入る。
  */
-async function renderAsExported(page, maxSide, marks = doc.marks) {
+async function renderAsExported(page, { marks = doc.marks, ...render } = {}) {
   const index = doc.pages.indexOf(page);
   // 1ページだけの見本なので、用紙・割付はかけない
   const one = { ...extractPages(doc, [page.id]), marks, layout: null };
   const bytes = await exportPdf(one, { ...exportOptions(), markNumbering: { offset: index, total: doc.pages.length } });
   const id = `exact-preview-${++markPreviewCount}`;
   try {
-    return await renderPdfPage(id, async () => bytes, 0, { maxSide });
+    return await renderPdfPage(id, async () => bytes, 0, render);
   } finally {
     closePdf(id);
   }
@@ -936,6 +983,7 @@ function renderCard(page, index, count) {
   const badges = [
     page.perspective ? '補正済み' : '',
     page.crop ? 'トリミング' : '',
+    hasRedactions(page) ? '墨消し' : '',
     page.annotations?.length ? `注釈${page.annotations.length}` : '',
   ].filter(Boolean);
   if (badges.length) {
@@ -1088,7 +1136,17 @@ const tools = createToolsDialog({
   getSelectedIndexes: () => doc.pages.map((p, i) => (selected.has(p.id) ? i : -1)).filter((i) => i >= 0),
   getBaseName: baseFileName,
   buildPdf,
-  renderImage: (page, options) => renderPageImage(page, store, options),
+  // 注釈（墨消しを含む）・トリミングのあるページは、書き出したときと同じ見た目で画像にする（墨消しした文字を出さないため）
+  renderImage: (page, options) =>
+    page.annotations?.length || page.crop
+      ? renderAsExported(page, {
+          marks: null,
+          scale: (options.dpi ?? 150) / 72,
+          maxSide: options.maxSide,
+          type: IMAGE_FORMATS[options.format ?? 'jpeg'].type,
+          quality: IMAGE_FORMATS[options.format ?? 'jpeg'].quality,
+        })
+      : renderPageImage(page, store, options),
   deliver,
   busy: (text) => (text ? showBusy(text) : hideBusy()),
   onError: (message) => toast(message, 'error'),
@@ -1099,7 +1157,7 @@ const preview = createPreview({
   // 書き込み・注釈・フォーム入力があるときは、書き出したときと同じ見た目にする
   renderPreview: (page, maxSide) =>
     page.annotations?.length || hasMarks(doc.marks) || (page.content.type === 'pdf' && doc.forms?.[page.content.sourceId])
-      ? renderAsExported(page, maxSide)
+      ? renderAsExported(page, { maxSide })
       : renderPageImage(page, store, { maxSide, format: 'jpeg' }),
 });
 

@@ -172,6 +172,7 @@ export function createCropEditor({ renderPage, onApply }) {
     if (event.key === 'Escape') close();
   });
   window.addEventListener('resize', layout);
+  new ResizeObserver(() => layout()).observe(stage);
 
   return { open, close, isOpen };
 }

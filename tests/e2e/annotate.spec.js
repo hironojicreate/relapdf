@@ -174,3 +174,27 @@ test('署名を手で書いてページに置き、次からは「前に使っ�
   }
   expect(images).toBe(2);
 });
+
+test('墨消し：黒く塗った下の文字は、書き出したPDFから消える（そのページは画像になる）', async ({ page }) => {
+  await openPdf(page);
+  await openAnnotator(page, 0);
+  await page.click('[data-tool="redact"]');
+  await expect(page.locator('#annotator-hint')).toContainText('下の文字も消えます');
+  // 説明が長くなって折り返すと、ページの絵の位置が変わるので、測り直す
+  await page.waitForTimeout(100);
+  const box = await page.locator('#annotator-page').boundingBox();
+  // 左上の「Page 1」の文字のあたりを塗る
+  await dragOn(page, box, [0.03, 0.03], [0.5, 0.15]);
+  await page.click('[data-annot="apply"]');
+  await expect(cards(page).nth(0).locator('.badge')).toContainText('墨消し');
+
+  const [download] = await Promise.all([page.waitForEvent('download'), page.click('[data-action="export"]:visible')]);
+  const bytes = await readFile(await download.path());
+  const texts = await readTexts(page, bytes);
+  expect(texts[0]).toEqual([]); // 1ページ目は画像になり、文字のデータはない
+  expect(texts[1].some((t) => t.text === 'Page 2')).toBe(true); // ほかのページはそのまま
+  const pdf = await PDFDocument.load(bytes);
+  const { width, height } = pdf.getPage(0).getSize();
+  expect(Math.round(width)).toBe(595); // 大きさは元のページと同じ
+  expect(Math.round(height)).toBe(842);
+});

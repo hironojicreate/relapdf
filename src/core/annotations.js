@@ -23,7 +23,15 @@ function toDisplayPoint({ x, y }, rotation) {
   }
 }
 
-export const ANNOTATION_TYPES = Object.freeze(['text', 'rect', 'ellipse', 'line', 'arrow', 'highlight', 'image']);
+export const ANNOTATION_TYPES = Object.freeze(['text', 'rect', 'ellipse', 'line', 'arrow', 'highlight', 'image', 'redact']);
+
+/**
+ * 墨消し（redact）のあるページか。
+ * 墨消しのあるページは、書き出すときにページ全体を画像にして、黒く塗った下の文字のデータも消す（呼び出し側で行う）。
+ */
+export function hasRedactions(page) {
+  return Boolean(page.annotations?.some((a) => a.type === 'redact'));
+}
 
 /** 注釈の色。マーカーは黄色が基本 */
 export const ANNOTATION_COLORS = Object.freeze({
@@ -53,6 +61,7 @@ const DOWN = Object.freeze({ 0: [0, 1], 90: [-1, 0], 180: [0, -1], 270: [1, 0] }
  * - image：x, y（画像の左上）, w, h（画像の幅・高さ。どちらもページの幅に対する割合）, sourceId, rotation
  * - rect / ellipse / highlight：x, y, w, h（左上と大きさ）, color
  * - line / arrow：x1, y1, x2, y2, color
+ * - redact：x, y, w, h（墨消し。黒く塗りつぶす。色は持たない）
  * rotation は、文字や画像をページ（回転前）に対して右に回す角度。回転したページに置くとき、画面で正しい向きに見えるようにする
  */
 export function normalizeAnnotation(a) {
@@ -64,7 +73,7 @@ export function normalizeAnnotation(a) {
     return v;
   };
   const out = { id: a.id, type: a.type };
-  if (a.type !== 'image') {
+  if (a.type !== 'image' && a.type !== 'redact') {
     if (!ANNOTATION_COLORS[a.color]) throw new Error(`注釈の色が不正です: ${a.color}`);
     out.color = a.color;
   }
@@ -157,11 +166,13 @@ export function annotationItems(annotations, { width, height, rotation }) {
         break;
       }
       case 'rect':
-      case 'highlight': {
+      case 'highlight':
+      case 'redact': {
         // 回転前の左下の角が、描くときの起点になる
         const p = at(a.x, a.y + a.h);
         const box = { x: p.x, y: p.y, width: a.w * width, height: a.h * height, angle };
-        if (a.type === 'highlight') items.push({ type: 'rect', ...box, color, fill: true, borderWidth: 0, opacity: HIGHLIGHT_OPACITY });
+        if (a.type === 'redact') items.push({ type: 'rect', ...box, color: [0, 0, 0], fill: true, borderWidth: 0, opacity: 1 });
+        else if (a.type === 'highlight') items.push({ type: 'rect', ...box, color, fill: true, borderWidth: 0, opacity: HIGHLIGHT_OPACITY });
         else items.push({ type: 'rect', ...box, color, borderWidth: LINE_WIDTH, opacity: 1 });
         break;
       }

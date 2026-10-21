@@ -52,8 +52,9 @@ export async function inspectPdf(bytes) {
  * @param {object} doc ページリスト
  * @param {object} options
  * @param {(sourceId: string) => Promise<Uint8Array>} options.getSourceBytes PDFの元データの中身を返す
- * @param {(page: object) => Promise<{bytes: Uint8Array, format: 'jpeg'|'png', width: number, height: number}>} options.getImage
- *   画像ページの、加工済みの画像を返す。width/height は加工前の元画像の大きさ（配置の計算に使う）
+ * @param {(page: object) => Promise<{bytes: Uint8Array, format: 'jpeg'|'png', width: number, height: number, pageSize?: {width: number, height: number}}>} options.getImage
+ *   画像ページの、加工済みの画像を返す。width/height は加工前の元画像の大きさ（配置の計算に使う）。
+ *   pageSize があれば、用紙の設定に関係なくその大きさ（ポイント）のページにして、画像をいっぱいに置く（墨消しで画像にしたページ）
  * @param {'a4'|'image'} [options.paper] 写真を置く用紙
  * @param {string} [options.title] PDFのタイトル
  * @param {Date} [options.date] 作成日時
@@ -95,9 +96,14 @@ export async function exportPdf(doc, options) {
     } else if (content.type === 'image') {
       const image = await getImage(page);
       const embedded = image.format === 'png' ? await out.embedPng(image.bytes) : await out.embedJpg(image.bytes);
-      const layout = imagePageLayout(image.width, image.height, paper);
-      pdfPage = out.addPage([layout.pageWidth, layout.pageHeight]);
-      pdfPage.drawImage(embedded, { x: layout.x, y: layout.y, width: layout.width, height: layout.height });
+      if (image.pageSize) {
+        pdfPage = out.addPage([image.pageSize.width, image.pageSize.height]);
+        pdfPage.drawImage(embedded, { x: 0, y: 0, width: image.pageSize.width, height: image.pageSize.height });
+      } else {
+        const layout = imagePageLayout(image.width, image.height, paper);
+        pdfPage = out.addPage([layout.pageWidth, layout.pageHeight]);
+        pdfPage.drawImage(embedded, { x: layout.x, y: layout.y, width: layout.width, height: layout.height });
+      }
     } else if (content.type === 'blank') {
       pdfPage = out.addPage([content.width, content.height]);
     } else {

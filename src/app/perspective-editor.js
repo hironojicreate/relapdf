@@ -325,6 +325,8 @@ export function createPerspectiveEditor({ getBlob, onApply }) {
     if (event.key === 'Escape') close();
   });
   window.addEventListener('resize', layout);
+  // 説明の文字が変わって、表示する場所の大きさが変わったときも、位置を合わせ直す
+  new ResizeObserver(() => layout()).observe(stage);
 
   return { open, close, isOpen };
 }
