@@ -186,3 +186,62 @@ test('四隅は写真の外（画面の端の方）まで動かせて、はみ�
   const pdf = await PDFDocument.load(await readFile(await download.path()));
   expect(pdf.getPageCount()).toBe(1);
 });
+
+// ---- M5：四隅の自動検出 ----
+
+// document-photo.jpg（1200×1600）の紙の四隅
+const PAPER = [
+  { x: 260 / 1200, y: 230 / 1600 },
+  { x: 980 / 1200, y: 300 / 1600 },
+  { x: 1060 / 1200, y: 1380 / 1600 },
+  { x: 150 / 1200, y: 1290 / 1600 },
+];
+
+function expectNearPaper(corners) {
+  corners.forEach((c, i) => {
+    expect(Math.abs(c.x - PAPER[i].x), `角${i + 1}のx`).toBeLessThan(0.02);
+    expect(Math.abs(c.y - PAPER[i].y), `角${i + 1}のy`).toBeLessThan(0.02);
+  });
+}
+
+test('書類の写真を読み込むと、四隅を自動で見つけて補正する。「補正を外す」で戻せる', async ({ page }) => {
+  await addPhoto(page, 'document-photo.jpg');
+  await expect(page.locator('#toast')).toContainText('自動で補正しました');
+  const state = await pageState(page);
+  expect(state.perspective.aspect).toBe('free');
+  expectNearPaper(state.perspective.corners);
+  await expect(cards(page).nth(0).locator('.badge')).toHaveText('補正済み');
+
+  await page.click('#toast-action');
+  await expect.poll(async () => (await pageState(page)).perspective).toBeNull();
+  await expect(cards(page).nth(0).locator('.badge')).toHaveCount(0);
+});
+
+test('紙の写っていない写真は、自動で補正しない', async ({ page }) => {
+  await addPhoto(page, 'photo-landscape.jpg');
+  expect((await pageState(page)).perspective).toBeNull();
+  await expect(page.locator('#toast')).not.toContainText('自動で補正');
+});
+
+test('補正画面は見つけた四隅から始まり、「自動検出」でいつでも戻せる', async ({ page }) => {
+  await addPhoto(page, 'document-photo.jpg');
+  await page.click('#toast-action'); // 自動の補正を外す
+  await expect.poll(async () => (await pageState(page)).perspective).toBeNull();
+  await openEditor(page);
+  await page.click('[data-editor="apply"]');
+  expectNearPaper((await pageState(page)).perspective.corners);
+
+  await openEditor(page);
+  await page.click('[data-editor="reset"]');
+  await page.click('[data-editor="detect"]');
+  await expect(page.locator('.editor-hint')).toHaveText('書類の四隅に、丸を合わせてください');
+  await page.click('[data-editor="apply"]');
+  expectNearPaper((await pageState(page)).perspective.corners);
+});
+
+test('四隅が見つからない写真で「自動検出」を押すと、そのことを知らせる', async ({ page }) => {
+  await addPhoto(page, 'photo-landscape.jpg');
+  await openEditor(page);
+  await page.click('[data-editor="detect"]');
+  await expect(page.locator('.editor-hint')).toContainText('見つけられませんでした');
+});

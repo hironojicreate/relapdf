@@ -5,6 +5,7 @@
 
 import { MAX_SOURCE_LONG_SIDE, fitLongSide } from '../core/layout.js';
 import { applyBrightness } from '../core/color.js';
+import { detectCorners } from './detect-image.js';
 
 /** カメラを使えないときのエラー。reason は画面に出す説明 */
 export class CameraError extends Error {
@@ -65,7 +66,7 @@ export function stopCamera(stream, video) {
  * @param {HTMLVideoElement} video
  * @param {{ brightness?: number, region?: {sx: number, sy: number, sw: number, sh: number} }} [options]
  *   brightness は明るさの倍率（1 でそのまま）。region は切り取る範囲（デジタルズームのとき、画面に見えている範囲）
- * @returns {Promise<{blob: Blob, width: number, height: number}>}
+ * @returns {Promise<{blob: Blob, width: number, height: number, corners: object[]|null}>}
  */
 export async function captureFrame(video, { brightness = 1, region } = {}) {
   const width = video.videoWidth;
@@ -85,11 +86,13 @@ export async function captureFrame(video, { brightness = 1, region } = {}) {
     applyBrightness(image, brightness);
     ctx.putImageData(image, 0, 0);
   }
+  // 書類の四隅を探しておく（見つかれば、ページに4点補正を自動でかける）
+  const corners = detectCorners(canvas, size.width, size.height);
   try {
     const blob = await new Promise((resolve, reject) => {
       canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('写真を作れませんでした'))), 'image/jpeg', 0.92);
     });
-    return { blob, width: size.width, height: size.height };
+    return { blob, width: size.width, height: size.height, corners };
   } finally {
     canvas.width = 0;
     canvas.height = 0;

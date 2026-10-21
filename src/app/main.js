@@ -199,6 +199,7 @@ function addFiles(fileList) {
   const files = [...fileList];
   if (files.length === 0) return Promise.resolve();
   return serial(async () => {
+    const before = doc;
     let next = doc;
     const errors = [];
     try {
@@ -217,6 +218,7 @@ function addFiles(fileList) {
       setStep('confirm');
     }
     if (errors.length > 0) toast(errors.join('\n'), 'error');
+    else notifyAutoCorrected(autoCorrectedIds(before, next));
   });
 }
 
@@ -233,7 +235,10 @@ async function addFile(current, file) {
   throw new Error('対応していないファイルです（PDFか画像を選んでください）');
 }
 
-function addImage(current, image, name) {
+/**
+ * 写真をページに加える。書類の四隅が見つかっていれば、4点補正を自動でかける。
+ */
+async function addImage(current, image, name) {
   const source = {
     kind: 'image',
     name,
@@ -242,7 +247,34 @@ function addImage(current, image, name) {
     width: image.width,
     height: image.height,
   };
-  return addSourceWithBlob(current, source, image.blob);
+  const next = await addSourceWithBlob(current, source, image.blob);
+  if (!image.corners) return next;
+  const pageId = next.pages[next.pages.length - 1].id;
+  return setPerspective(next, pageId, { corners: image.corners, aspect: 'free' });
+}
+
+/** 新しく加わったページのうち、自動で補正したもののID */
+function autoCorrectedIds(before, after) {
+  const old = new Set(before.pages.map((p) => p.id));
+  return after.pages.filter((p) => !old.has(p.id) && p.perspective).map((p) => p.id);
+}
+
+/** 自動で補正したことを知らせ、「補正を外す」で元の写真に戻せるようにする */
+function notifyAutoCorrected(ids) {
+  if (ids.length === 0) return;
+  toast(ids.length > 1 ? `${ids.length}枚を自動で補正しました` : '自動で補正しました', 'info', {
+    duration: 6000,
+    action: {
+      label: '補正を外す',
+      run: () => {
+        let next = doc;
+        for (const id of ids) {
+          if (next.pages.some((p) => p.id === id)) next = setPerspective(next, id, null);
+        }
+        update(next);
+      },
+    },
+  });
 }
 
 async function addSourceWithBlob(current, source, blob) {
@@ -256,6 +288,8 @@ async function addSourceWithBlob(current, source, blob) {
 
 // ---- カメラ ----
 
+let cameraAutoIds = []; // カメラで撮って、自動で補正したページ（カメラを閉じたときに知らせる）
+
 const camera = createCameraView({
   // 撮った写真をページに加え、そのページのIDを返す（「最後の1枚を取り消す」で使う）
   onCapture: (frame, number) =>
@@ -264,15 +298,20 @@ const camera = createCameraView({
       const next = await addImage(doc, frame, name);
       easyStep = 'confirm';
       update(next);
-      return next.pages[next.pages.length - 1].id;
+      const pageId = next.pages[next.pages.length - 1].id;
+      if (frame.corners) cameraAutoIds.push(pageId);
+      return pageId;
     }),
   onUndo: (pageId) =>
     serial(async () => {
       if (doc.pages.some((p) => p.id === pageId)) update(removePages(doc, [pageId]));
+      cameraAutoIds = cameraAutoIds.filter((id) => id !== pageId);
     }),
   onDone: () => {
     setStep(doc.pages.length > 0 ? 'confirm' : 'capture');
     saveStateNow();
+    notifyAutoCorrected(cameraAutoIds.filter((id) => doc.pages.some((p) => p.id === id)));
+    cameraAutoIds = [];
   },
   onUseOsCamera: () => els.inputCamera.click(),
   onBusy: (text) => (text ? showBusy(text) : hideBusy()),

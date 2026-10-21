@@ -5,6 +5,7 @@
 
 import { MAX_SOURCE_LONG_SIDE, fitLongSide, targetImageSize } from '../core/layout.js';
 import { outputSize, toPixels, warpPerspective } from '../core/perspective.js';
+import { detectCorners } from './detect-image.js';
 
 /** 読み込めない画像形式のときのエラー */
 export class UnsupportedImageError extends Error {
@@ -69,13 +70,15 @@ export async function encodeImage(source, width, height, { type = 'image/jpeg', 
 /**
  * 写真ファイルを読み込み、長辺を上限までに縮小したJPEGにする。
  * これを元データとして保存し、書き出しのときに画質の設定に合わせてもう一度縮小する。
+ * 書類の四隅が見つかったときは corners も返す（見つからなければ null）。
  */
 export async function loadImageFile(file) {
   const decoded = await decodeImage(file, file.name);
   try {
     const size = fitLongSide(decoded.width, decoded.height, MAX_SOURCE_LONG_SIDE);
     const blob = await encodeImage(decoded.source, size.width, size.height, { quality: 0.92 });
-    return { blob, width: size.width, height: size.height };
+    const corners = detectCorners(decoded.source, decoded.width, decoded.height);
+    return { blob, width: size.width, height: size.height, corners };
   } finally {
     decoded.close();
   }

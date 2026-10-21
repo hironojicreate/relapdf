@@ -4,16 +4,19 @@
 // つまんでいる間は、指で隠れる部分を拡大した「ルーペ」を表示する。
 // 画面にはページの回転をかけた向きで表示し、保存するときに回転前の座標に戻す。
 // 書類の端が写真からはみ出していることもあるので、四隅は写真の外（画面の端まで）にも動かせる。
+// まだ補正していない写真は、自動で見つけた書類の四隅（見つからなければ少し内側）から始める。
 
 import { fitLongSide } from '../core/layout.js';
 import { PERSPECTIVE_MARGIN } from '../core/page-list.js';
 import { defaultCorners, fromDisplayPoint, isConvexQuad, toDisplayPoint } from '../core/perspective.js';
 import { drawImageClipped } from '../web/canvas-util.js';
 import { decodeImage } from '../web/image.js';
+import { detectCorners } from '../web/detect-image.js';
 
 const DISPLAY_LONG_SIDE = 1600; // 補正画面に表示する画像の長辺（メモリを節約するため縮小する）
 const LOUPE_ZOOM = 3;
 const STAGE_PADDING = 22; // 角の丸が画面の端で切れないための余白
+const HINT = '書類の四隅に、丸を合わせてください';
 
 /**
  * @param {object} options
@@ -28,9 +31,11 @@ export function createPerspectiveEditor({ getBlob, onApply }) {
   const overlay = $('#editor-overlay');
   const loupe = $('#editor-loupe');
   const a4Toggle = $('#editor-a4');
+  const hint = root.querySelector('.editor-hint');
 
   let page = null;
   let base = null; // 回転をかけて縮小した表示用の画像（canvas）
+  let detected = null; // 自動で見つけた四隅（回転前の向き。見つからなければ null）
   let corners = []; // 画面の向きでの四隅（0〜1）
   let box = null; // 画像を表示している位置と大きさ（stage の中、CSSピクセル）
   let drag = null;
@@ -43,11 +48,14 @@ export function createPerspectiveEditor({ getBlob, onApply }) {
     document.body.classList.add('editor-open');
     root.classList.add('loading');
     a4Toggle.checked = page.perspective?.aspect === 'a4';
-    corners = (page.perspective?.corners ?? defaultCorners()).map((c) => toDisplayPoint(c, page.rotation));
+    hint.textContent = HINT;
+    setCorners(page.perspective?.corners ?? defaultCorners());
     try {
       const prepared = await prepareBase(await getBlob(page), page.rotation);
       if (token !== opening) return; // 準備中に閉じられた
-      base = prepared;
+      base = prepared.canvas;
+      detected = prepared.detected;
+      if (!page.perspective && detected) setCorners(detected);
       root.classList.remove('loading');
       layout();
       root.querySelector('[data-editor="apply"]').focus();
@@ -64,6 +72,7 @@ export function createPerspectiveEditor({ getBlob, onApply }) {
     loupe.hidden = true;
     drag = null;
     page = null;
+    detected = null;
     if (base) {
       base.width = 0;
       base.height = 0;
@@ -75,10 +84,17 @@ export function createPerspectiveEditor({ getBlob, onApply }) {
     return !root.hidden;
   }
 
-  /** 写真を縮小し、ページの回転をかけた向きで描いておく */
+  /** 回転前の向きの四隅（0〜1）を、画面の向きにして表示する */
+  function setCorners(original) {
+    corners = original.map((c) => toDisplayPoint(c, page.rotation));
+    drawOverlay();
+  }
+
+  /** 写真を縮小し、ページの回転をかけた向きで描いておく。書類の四隅もここで探す */
   async function prepareBase(blob, rotation) {
     const decoded = await decodeImage(blob);
     try {
+      const found = detectCorners(decoded.source, decoded.width, decoded.height);
       const size = fitLongSide(decoded.width, decoded.height, DISPLAY_LONG_SIDE);
       const sideways = rotation === 90 || rotation === 270;
       const c = document.createElement('canvas');
@@ -88,7 +104,7 @@ export function createPerspectiveEditor({ getBlob, onApply }) {
       ctx.translate(c.width / 2, c.height / 2);
       ctx.rotate((rotation * Math.PI) / 180);
       ctx.drawImage(decoded.source, -size.width / 2, -size.height / 2, size.width, size.height);
-      return c;
+      return { canvas: c, detected: found };
     } finally {
       decoded.close();
     }
@@ -289,9 +305,15 @@ export function createPerspectiveEditor({ getBlob, onApply }) {
     if (action === 'apply') apply();
     else if (action === 'cancel') close();
     else if (action === 'remove') remove();
-    else if (action === 'reset') {
-      corners = defaultCorners();
-      drawOverlay();
+    else if (action === 'reset') setCorners(defaultCorners());
+    else if (action === 'detect') {
+      if (!page || !base) return;
+      if (detected) {
+        setCorners(detected);
+        hint.textContent = HINT;
+      } else {
+        hint.textContent = '書類の四隅を見つけられませんでした。丸を動かして合わせてください';
+      }
     }
   });
   root.addEventListener('keydown', (event) => {
