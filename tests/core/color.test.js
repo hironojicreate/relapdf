@@ -70,3 +70,24 @@ test('書類モード：大きな黒い文字の中も、白く抜けない', ()
   assert.ok(pixel(img, 80, 100)[0] <= 40, '太い線の真ん中');
   assert.ok(pixel(img, 150, 100)[0] >= 245, '紙');
 });
+
+test('署名の画像：白い紙を透明にし、インクは残す。色をそろえられる', async () => {
+  const { removeWhiteBackground, opaqueBounds } = await import('../../src/core/color.js');
+  const width = 40;
+  const height = 20;
+  const data = new Uint8ClampedArray(width * height * 4);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      // 少し灰色がかった紙に、横線のインク（10〜29列、8〜11行）
+      const ink = x >= 10 && x < 30 && y >= 8 && y < 12;
+      const v = ink ? 40 : 225 + ((x + y) % 5);
+      data.set([v, v, v, 255], (y * width + x) * 4);
+    }
+  }
+  const image = removeWhiteBackground({ data, width, height }, { color: [200, 0, 0] });
+  const alpha = (x, y) => image.data[(y * width + x) * 4 + 3];
+  assert.equal(alpha(2, 2), 0, '紙は透明');
+  assert.equal(alpha(15, 9), 255, 'インクは不透明');
+  assert.deepEqual([...image.data.subarray((9 * width + 15) * 4, (9 * width + 15) * 4 + 3)], [200, 0, 0]);
+  assert.deepEqual(opaqueBounds(image), { x: 10, y: 8, width: 20, height: 4 });
+});

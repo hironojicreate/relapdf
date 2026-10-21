@@ -17,11 +17,13 @@ import {
   serializeDocument,
   extractPages,
   setFilter,
+  newId,
+  setAnnotations,
   setFormValues,
   setMarks,
   setPerspective,
 } from '../core/page-list.js';
-import { describeMarks } from '../core/marks.js';
+import { describeMarks, hasMarks } from '../core/marks.js';
 import { COMPRESS_LEVELS } from '../core/compress.js';
 import { exportPdf, inspectPdf } from '../core/pdf-export.js';
 import { defaultFileName, sanitizeFileName, stripExtension } from '../core/filename.js';
@@ -43,6 +45,8 @@ import { createStepHistory } from './navigation.js';
 import { createToolsDialog } from './tools-dialog.js';
 import { createMarksDialog } from './marks-dialog.js';
 import { createFormsDialog } from './forms-dialog.js';
+import { createAnnotator } from './annotate-editor.js';
+import { createSignatureDialog } from './signature-dialog.js';
 import { createPreview } from './preview.js';
 import { renderPageImage } from '../web/page-image.js';
 import { APP_VERSION } from './version.js';
@@ -451,7 +455,65 @@ function exportOptions(onImage = () => {}) {
       });
     },
     getFont: loadMarkFont,
+    getAnnotationImage: async (sourceId) => ({
+      bytes: await store.bytes(sourceId),
+      format: doc.sources[sourceId]?.mimeType === 'image/jpeg' ? 'jpeg' : 'png',
+    }),
   };
+}
+
+// ---- 注釈・署名 ----
+
+// 署名・印鑑の画像は、注釈を「完了」したときにページリストに登録する（それまでは端末に保存だけしておく）
+const pendingAssets = new Map(); // sourceId → { width, height, byteLength }
+const assetUrls = new Map(); // sourceId → 表示用URL
+
+async function assetUrl(sourceId) {
+  if (!assetUrls.has(sourceId)) assetUrls.set(sourceId, URL.createObjectURL(await store.get(sourceId)));
+  return assetUrls.get(sourceId);
+}
+
+const signatureDialog = createSignatureDialog({
+  getRecent: () => {
+    const assets = Object.values(doc.sources)
+      .filter((s) => s.asset)
+      .map((s) => ({ sourceId: s.id, width: s.width, height: s.height }));
+    for (const [sourceId, info] of pendingAssets) assets.push({ sourceId, width: info.width, height: info.height });
+    return assets.map((a) => ({ ...a, url: assetUrls.get(a.sourceId) ?? '' })).filter((a) => a.url);
+  },
+  createAsset: async (blob, width, height) => {
+    const sourceId = newId('src');
+    await store.put(sourceId, blob);
+    pendingAssets.set(sourceId, { width, height, byteLength: blob.size });
+    assetUrls.set(sourceId, URL.createObjectURL(blob));
+    return sourceId;
+  },
+});
+
+const annotator = createAnnotator({
+  renderPage: (page) => renderPageImage(page, store, { maxSide: 1600, format: 'jpeg' }),
+  getImageUrl: assetUrl,
+  pickImage: () => signatureDialog.open(),
+  onApply: (pageId, annotations) => {
+    if (!doc.pages.some((p) => p.id === pageId)) return;
+    let next = doc;
+    for (const a of annotations) {
+      if (a.type !== 'image' || next.sources[a.sourceId]) continue;
+      const info = pendingAssets.get(a.sourceId);
+      if (!info) continue;
+      next = addSource(next, { id: a.sourceId, kind: 'image', asset: true, name: '署名・印鑑', mimeType: 'image/png', ...info });
+      pendingAssets.delete(a.sourceId);
+    }
+    update(setAnnotations(next, pageId, annotations));
+    toast(annotations.length ? `注釈を保存しました（${annotations.length}個）` : '注釈を外しました');
+  },
+});
+
+/** 選んでいるページ（なければ1ページ目）の注釈を開く */
+function openAnnotator() {
+  const id = selectedIds()[0] ?? doc.pages[0]?.id;
+  const page = doc.pages.find((p) => p.id === id);
+  if (page) annotator.open(page);
 }
 
 // ---- 書き込み（ページ番号・ヘッダー/フッター・透かし・スタンプ） ----
@@ -466,17 +528,26 @@ const marksDialog = createMarksDialog({
   // 見本：1ページだけPDFにして、画像にする（表紙を数えないときは2ページ目）
   renderPreview: async (marks) => {
     const index = marks.pageNumber.enabled && marks.pageNumber.skipFirst && doc.pages.length > 1 ? 1 : 0;
-    const one = { ...extractPages(doc, [doc.pages[index].id]), marks };
-    const bytes = await exportPdf(one, { ...exportOptions(), markNumbering: { offset: index, total: doc.pages.length } });
-    const id = `marks-preview-${++markPreviewCount}`;
-    try {
-      const blob = await renderPdfPage(id, async () => bytes, 0, { maxSide: 900 });
-      return { url: URL.createObjectURL(blob), pageNumber: index + 1 };
-    } finally {
-      closePdf(id);
-    }
+    const blob = await renderAsExported(doc.pages[index], 900, marks);
+    return { url: URL.createObjectURL(blob), pageNumber: index + 1 };
   },
 });
+
+/**
+ * 1ページだけ実際にPDFにして、画像にする（書き出したときと同じ見た目の見本）。
+ * 書き込み・注釈・フォーム入力も入る。
+ */
+async function renderAsExported(page, maxSide, marks = doc.marks) {
+  const index = doc.pages.indexOf(page);
+  const one = { ...extractPages(doc, [page.id]), marks };
+  const bytes = await exportPdf(one, { ...exportOptions(), markNumbering: { offset: index, total: doc.pages.length } });
+  const id = `exact-preview-${++markPreviewCount}`;
+  try {
+    return await renderPdfPage(id, async () => bytes, 0, { maxSide });
+  } finally {
+    closePdf(id);
+  }
+}
 
 // ---- フォーム入力 ----
 
@@ -724,7 +795,7 @@ function selectAllToggle() {
 }
 
 function suggestedFileName() {
-  const sources = Object.values(doc.sources);
+  const sources = Object.values(doc.sources).filter((source) => !source.asset); // 署名・印鑑の画像は数えない
   if (sources.length === 1 && sources[0].kind === 'pdf') return stripExtension(sources[0].name);
   return stripExtension(defaultFileName());
 }
@@ -765,12 +836,6 @@ function renderCard(page, index, count) {
       thumb.dataset.op = 'perspective';
       thumb.title = 'タップして4点補正';
     }
-    if (page.perspective) {
-      const badge = document.createElement('span');
-      badge.className = 'badge';
-      badge.textContent = '補正済み';
-      thumb.append(badge);
-    }
     thumbnailFor(page)
       .then((url) => {
         img.src = url;
@@ -781,6 +846,15 @@ function renderCard(page, index, count) {
         console.error(error);
         spinner.remove();
       });
+  }
+
+  // 印：4点補正をしたページ、注釈のあるページ
+  const badges = [page.perspective ? '補正済み' : '', page.annotations?.length ? `注釈${page.annotations.length}` : ''].filter(Boolean);
+  if (badges.length) {
+    const badge = document.createElement('span');
+    badge.className = 'badge';
+    badge.textContent = badges.join('・');
+    thumb.append(badge);
   }
 
   const source = content.type === 'blank' ? null : doc.sources[content.sourceId];
@@ -934,13 +1008,25 @@ const tools = createToolsDialog({
 
 const preview = createPreview({
   getDoc: () => doc,
-  renderPreview: (page, maxSide) => renderPageImage(page, store, { maxSide, format: 'jpeg' }),
+  // 書き込み・注釈・フォーム入力があるときは、書き出したときと同じ見た目にする
+  renderPreview: (page, maxSide) =>
+    page.annotations?.length || hasMarks(doc.marks) || (page.content.type === 'pdf' && doc.forms?.[page.content.sourceId])
+      ? renderAsExported(page, maxSide)
+      : renderPageImage(page, store, { maxSide, format: 'jpeg' }),
 });
 
 /** スマホの「戻る」で閉じられる画面（カメラ・補正画面・ダイアログ）が開いていれば閉じる */
 function closeOverlay() {
   if (editor.isOpen()) {
     editor.close();
+    return true;
+  }
+  if (signatureDialog.isOpen()) {
+    document.querySelector('#signature-dialog').close();
+    return true;
+  }
+  if (annotator.isOpen()) {
+    annotator.close();
     return true;
   }
   if (camera.isOpen()) {
@@ -1013,6 +1099,9 @@ function onAction(action) {
       break;
     case 'delete-selected':
       deletePages(selectedIds());
+      break;
+    case 'open-annotator':
+      openAnnotator();
       break;
     case 'open-forms':
       formsDialog.open();
@@ -1120,7 +1209,7 @@ els.grid.addEventListener('click', (event) => {
 });
 // 詳細モード：ページのない所からマウスでドラッグすると、青い四角に入ったページをまとめて選ぶ
 enableMarqueeSelect(document.body, {
-  enabled: () => mode === 'detail' && doc.pages.length > 0 && !els.workspace.hidden && !editor.isOpen() && !camera.isOpen(),
+  enabled: () => mode === 'detail' && doc.pages.length > 0 && !els.workspace.hidden && !editor.isOpen() && !camera.isOpen() && !annotator.isOpen(),
   cards: () => [...els.grid.querySelectorAll('.page-card')],
   onSelect: (ids, { add }) => {
     selected = new Set(add ? [...selected, ...ids] : ids);
@@ -1142,7 +1231,7 @@ els.workspace.addEventListener('click', (event) => {
 
 // 詳細モードのキーボード操作：Ctrl/⌘+A すべて選択、Delete 削除、Esc 選択を外す、Ctrl/⌘+Z 元に戻す
 document.addEventListener('keydown', (event) => {
-  if (mode !== 'detail' || document.querySelector('dialog[open]') || camera.isOpen() || editor.isOpen()) return;
+  if (mode !== 'detail' || document.querySelector('dialog[open]') || camera.isOpen() || editor.isOpen() || annotator.isOpen()) return;
   if (event.target.closest?.('input, select, textarea')) return;
   const mod = event.ctrlKey || event.metaKey;
   if (mod && event.key.toLowerCase() === 'a' && doc.pages.length > 0) {
@@ -1215,6 +1304,7 @@ function canReloadNow() {
   return (
     !camera.isOpen() &&
     !editor.isOpen() &&
+    !annotator.isOpen() &&
     !document.querySelector('dialog[open]') &&
     els.busy.hidden
   );

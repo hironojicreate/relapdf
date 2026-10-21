@@ -136,3 +136,56 @@ function gridFilter(grid, gw, gh, combine) {
   }
   return out;
 }
+
+// ---- 署名・印鑑の画像 ----
+
+/**
+ * 白い紙の部分を透明にする（元の配列を書き換える）。署名や印鑑の写真を、ページに重ねて置けるようにするため。
+ * 紙の白さを画像の明るい方から調べ、それより暗い所（インク）ほど不透明にする。境目はなめらかにする。
+ * @param {{data: Uint8ClampedArray, width: number, height: number}} image
+ * @param {{ color?: number[] | null }} [options] color を指定すると、インクの色をその色（0〜255のRGB）にそろえる
+ */
+export function removeWhiteBackground(image, { color = null } = {}) {
+  const { data } = image;
+  const histogram = new Uint32Array(256);
+  for (let i = 0; i < data.length; i += 4) histogram[luminance(data[i], data[i + 1], data[i + 2])] += 1;
+  // 明るい方から10%の明るさを「紙の白」とする
+  const total = data.length / 4;
+  let count = 0;
+  let white = 255;
+  while (white > 0 && count + histogram[white] < total * 0.1) count += histogram[white--];
+  white = Math.max(white, 120);
+  const hi = white - 28; // これより明るい所は完全に透明
+  const lo = white * 0.6; // これより暗い所は完全に不透明
+  for (let i = 0; i < data.length; i += 4) {
+    const l = luminance(data[i], data[i + 1], data[i + 2]);
+    const alpha = Math.min(1, Math.max(0, (hi - l) / (hi - lo)));
+    if (color) {
+      data[i] = color[0];
+      data[i + 1] = color[1];
+      data[i + 2] = color[2];
+    }
+    data[i + 3] = Math.round(alpha * data[i + 3]);
+  }
+  return image;
+}
+
+/** 透明でない部分を囲む範囲（すべて透明なら null） */
+export function opaqueBounds(image, minAlpha = 16) {
+  const { data, width, height } = image;
+  let left = width;
+  let right = -1;
+  let top = height;
+  let bottom = -1;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (data[(y * width + x) * 4 + 3] < minAlpha) continue;
+      if (x < left) left = x;
+      if (x > right) right = x;
+      if (y < top) top = y;
+      if (y > bottom) bottom = y;
+    }
+  }
+  if (right < 0) return null;
+  return { x: left, y: top, width: right - left + 1, height: bottom - top + 1 };
+}

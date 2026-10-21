@@ -8,6 +8,7 @@ import { imagePageLayout } from './layout.js';
 import { hasMarks, marksForPage, normalizeMarks, toPageSpace } from './marks.js';
 import { compressImages } from './compress.js';
 import { fillAndFlatten, readFormFields } from './forms.js';
+import { annotationItems } from './annotations.js';
 import { normalizeRotation } from './page-list.js';
 
 export const APP_NAME = 'RelaPDF';
@@ -59,12 +60,14 @@ export async function inspectPdf(bytes) {
  *   書き込み（doc.marks）に使う日本語フォントと fontkit を返す。書き込みがあるときだけ呼ぶ
  * @param {{ level: 'standard'|'strong', recompressJpeg: Function, onResult?: (result: object) => void }} [options.compress]
  *   読み込んだPDFの中の画像を縮小し直す（compress.js）。写真のページは画質の設定で縮小済みなので対象外
+ * @param {(sourceId: string) => Promise<{bytes: Uint8Array, format: 'png'|'jpeg'}>} [options.getAnnotationImage]
+ *   注釈の画像（署名・印鑑）の中身を返す。画像の注釈があるときだけ呼ぶ
  * @param {{ offset: number, total: number }} [options.markNumbering]
  *   書き込みのページ番号の数え方を変える（見本として一部のページだけ書き出すとき。offset は最初のページが元の何ページ目か）
  * @returns {Promise<Uint8Array>}
  */
 export async function exportPdf(doc, options) {
-  const { getSourceBytes, getImage, getFont, markNumbering, compress, paper = 'a4', title, date = new Date() } = options;
+  const { getSourceBytes, getImage, getFont, getAnnotationImage, markNumbering, compress, paper = 'a4', title, date = new Date() } = options;
   if (doc.pages.length === 0) throw new Error('ページがありません');
 
   // updateMetadata: false にしないと、保存時に作成者などが pdf-lib の名前で上書きされる
@@ -83,6 +86,7 @@ export async function exportPdf(doc, options) {
     compress.onResult?.(result);
   }
 
+  const annotated = []; // { pdfPage, page, baseRotation }
   for (const page of doc.pages) {
     const { content } = page;
     let pdfPage;
@@ -106,50 +110,114 @@ export async function exportPdf(doc, options) {
 
     // PDFにもともと付いている回転に、ユーザーの回転を足す
     pdfPage.setRotation(degrees(normalizeRotation(baseRotation + page.rotation)));
+    if (page.annotations?.length) annotated.push({ pdfPage, page, baseRotation: normalizeRotation(baseRotation) });
   }
 
-  if (hasMarks(doc.marks)) await drawMarks(out, normalizeMarks(doc.marks), { getFont, date, numbering: markNumbering });
+  // 日本語フォントは、使うときに1回だけ埋め込む（使う文字だけ。全部入れると数MBになるため）
+  let fontPromise = null;
+  const loadFont = () => {
+    fontPromise ??= (async () => {
+      if (!getFont) throw new Error('文字の書き込みに使うフォントがありません');
+      const { bytes, fontkit } = await getFont();
+      out.registerFontkit(fontkit);
+      return out.embedFont(bytes, { subset: true });
+    })();
+    return fontPromise;
+  };
+
+  if (annotated.length > 0) await drawAnnotations(out, annotated, { loadFont, getAnnotationImage });
+  if (hasMarks(doc.marks)) await drawMarks(out, normalizeMarks(doc.marks), { loadFont, date, numbering: markNumbering });
 
   return out.save();
 }
 
+/** 注釈（文字・図形・署名や印鑑の画像）を描く */
+async function drawAnnotations(out, annotated, { loadFont, getAnnotationImage }) {
+  const needsFont = annotated.some(({ page }) => page.annotations.some((a) => a.type === 'text' && a.text.trim()));
+  const font = needsFont ? await loadFont() : null;
+  const images = new Map(); // sourceId → 埋め込んだ画像（同じ画像は1回だけ埋め込む）
+  for (const { pdfPage, page, baseRotation } of annotated) {
+    for (const a of page.annotations) {
+      if (a.type !== 'image' || images.has(a.sourceId)) continue;
+      if (!getAnnotationImage) throw new Error('注釈の画像がありません');
+      const image = await getAnnotationImage(a.sourceId);
+      images.set(a.sourceId, image.format === 'png' ? await out.embedPng(image.bytes) : await out.embedJpg(image.bytes));
+    }
+    // 注釈の座標の基準：PDFにもともと付いている回転をかけたページ（ユーザーの回転をかける前）
+    const box = pdfPage.getCropBox();
+    const sideways = baseRotation === 90 || baseRotation === 270;
+    const frame = { width: sideways ? box.height : box.width, height: sideways ? box.width : box.height, rotation: page.rotation };
+    drawItems(pdfPage, annotationItems(page.annotations, frame), { font, images });
+  }
+}
+
 /** すべてのページに、書き込み（ページ番号など）をする */
-async function drawMarks(out, marks, { getFont, date, numbering }) {
-  if (!getFont) throw new Error('書き込みに使うフォントがありません');
-  const { bytes, fontkit } = await getFont();
-  out.registerFontkit(fontkit);
-  // 使う文字だけを埋め込む（日本語フォントは全部入れると数MBになるため）
-  const font = await out.embedFont(bytes, { subset: true });
+async function drawMarks(out, marks, { loadFont, date, numbering }) {
+  const font = await loadFont();
   const measure = (text, size) => font.widthOfTextAtSize(text, size);
   const pages = out.getPages();
   const offset = numbering?.offset ?? 0;
   const total = numbering?.total ?? pages.length;
   pages.forEach((pdfPage, i) => {
-    const index = offset + i;
     const rotation = normalizeRotation(pdfPage.getRotation().angle);
     const box = pdfPage.getCropBox();
     const sideways = rotation === 90 || rotation === 270;
     const view = { width: sideways ? box.height : box.width, height: sideways ? box.width : box.height };
-    for (const item of marksForPage(marks, { ...view, index, total, date, measure })) {
-      const p = toPageSpace(rotation, box, item.x, item.y);
-      const rotate = degrees(normalizeRotation(p.angle + item.angle));
-      const color = rgb(...item.color);
-      if (item.type === 'text') {
-        pdfPage.drawText(item.text, { x: p.x, y: p.y, size: item.size, font, color, opacity: item.opacity, rotate });
-      } else {
-        pdfPage.drawRectangle({
-          x: p.x,
-          y: p.y,
-          width: item.width,
-          height: item.height,
-          borderColor: color,
-          borderWidth: item.borderWidth,
-          borderOpacity: item.opacity,
-          rotate,
-        });
-      }
-    }
+    drawItems(pdfPage, marksForPage(marks, { ...view, index: offset + i, total, date, measure }), { font });
   });
+}
+
+/**
+ * 画面で見たときの向きの座標（ポイント・左下が原点）で表した内容を、ページに描く。
+ * 回転したページでは、回転前の座標に戻して、文字や図形も一緒に回す（marks.js の toPageSpace）。
+ */
+function drawItems(pdfPage, items, { font, images }) {
+  const rotation = normalizeRotation(pdfPage.getRotation().angle);
+  const box = pdfPage.getCropBox();
+  const place = (x, y) => toPageSpace(rotation, box, x, y);
+  for (const item of items) {
+    const color = item.color ? rgb(...item.color) : undefined;
+    if (item.type === 'line') {
+      const a = place(item.x1, item.y1);
+      const b = place(item.x2, item.y2);
+      pdfPage.drawLine({ start: { x: a.x, y: a.y }, end: { x: b.x, y: b.y }, thickness: item.width, color, opacity: item.opacity, lineCap: 1 });
+      continue;
+    }
+    if (item.type === 'ellipse') {
+      const c = place(item.cx, item.cy);
+      pdfPage.drawEllipse({
+        x: c.x,
+        y: c.y,
+        xScale: item.rx,
+        yScale: item.ry,
+        rotate: degrees(normalizeRotation(c.angle + item.angle)),
+        borderColor: color,
+        borderWidth: item.borderWidth,
+        borderOpacity: item.opacity,
+      });
+      continue;
+    }
+    const p = place(item.x, item.y);
+    const rotate = degrees(normalizeRotation(p.angle + item.angle));
+    if (item.type === 'text') {
+      pdfPage.drawText(item.text, { x: p.x, y: p.y, size: item.size, font, color, opacity: item.opacity, rotate });
+    } else if (item.type === 'image') {
+      pdfPage.drawImage(images.get(item.sourceId), { x: p.x, y: p.y, width: item.width, height: item.height, rotate });
+    } else if (item.fill) {
+      pdfPage.drawRectangle({ x: p.x, y: p.y, width: item.width, height: item.height, color, opacity: item.opacity, rotate });
+    } else {
+      pdfPage.drawRectangle({
+        x: p.x,
+        y: p.y,
+        width: item.width,
+        height: item.height,
+        borderColor: color,
+        borderWidth: item.borderWidth,
+        borderOpacity: item.opacity,
+        rotate,
+      });
+    }
+  }
 }
 
 async function copyPdfPages(doc, out, getSourceBytes, getFont) {

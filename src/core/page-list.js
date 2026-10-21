@@ -9,6 +9,7 @@
 
 import { normalizeMarks } from './marks.js';
 import { normalizeFormValues } from './forms.js';
+import { annotationSourceIds, normalizeAnnotations } from './annotations.js';
 
 export const SCHEMA_VERSION = 1;
 
@@ -69,6 +70,8 @@ export function addSource(doc, source) {
     // PDFはページ数、画像は常に1
     pageCount: source.kind === 'image' ? 1 : source.pageCount,
   };
+  // 注釈で使う画像（署名・印鑑）。ページにはならない
+  if (source.kind === 'image' && source.asset) normalized.asset = true;
   // PDFに入力欄（フォーム）があれば、その数（フォーム入力のボタンを出すかどうかに使う）
   if (source.kind === 'pdf' && source.formFieldCount > 0) normalized.formFieldCount = source.formFieldCount;
   if (source.kind === 'image') {
@@ -214,6 +217,23 @@ export function setMarks(doc, marks) {
 }
 
 /**
+ * ページの注釈（文字・図形・署名や印鑑の画像）を置き換える。空の配列で外す。
+ * 画像の注釈が使う元データ（asset の画像）は、先に addSource で登録しておく。
+ */
+export function setAnnotations(doc, pageId, annotations) {
+  const page = findPage(doc, pageId);
+  const list = normalizeAnnotations(annotations);
+  for (const a of list) {
+    if (a.type === 'image' && doc.sources[a.sourceId]?.kind !== 'image') throw new Error(`注釈の画像が見つかりません: ${a.sourceId}`);
+  }
+  return mapPages(doc, new Set([page.id]), (p) => {
+    const next = { ...p, annotations: list };
+    if (list.length === 0) delete next.annotations;
+    return next;
+  });
+}
+
+/**
  * フォーム入力の内容を設定する（元データのPDFごと）。空のオブジェクトか null で外す。
  * @param {Record<string, string|boolean> | null} values 入力欄の名前 → 値
  */
@@ -236,7 +256,7 @@ export function setFilter(doc, pageIds, filter) {
 
 /** どのページからも使われていない元データを取り除く。取り除いたIDも返す（バイナリの削除に使う） */
 export function pruneSources(doc) {
-  const used = new Set();
+  const used = annotationSourceIds(doc.pages); // 注釈で使っている画像（署名・印鑑）も残す
   for (const page of doc.pages) {
     if (page.content.type !== 'blank') used.add(page.content.sourceId);
   }
@@ -323,6 +343,11 @@ export function validateDocument(doc) {
       if (source.kind !== content.type) throw new Error(`ページと元データの種類が一致しません: ${page.id}`);
       if (!(content.pageIndex >= 0 && content.pageIndex < source.pageCount)) {
         throw new Error(`ページ番号が範囲外です: ${page.id}`);
+      }
+    }
+    if (page.annotations !== undefined) {
+      for (const a of normalizeAnnotations(page.annotations)) {
+        if (a.type === 'image' && doc.sources[a.sourceId]?.kind !== 'image') throw new Error(`注釈の画像が見つかりません: ${a.sourceId}`);
       }
     }
     if (page.perspective !== null) {
