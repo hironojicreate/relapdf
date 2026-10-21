@@ -21,11 +21,12 @@ import {
   setPerspective,
 } from '../core/page-list.js';
 import { describeMarks } from '../core/marks.js';
+import { COMPRESS_LEVELS } from '../core/compress.js';
 import { exportPdf, inspectPdf } from '../core/pdf-export.js';
 import { defaultFileName, sanitizeFileName, stripExtension } from '../core/filename.js';
 import { PAPER_MODES, QUALITY_PRESETS } from '../core/layout.js';
 import { createSourceStore, isQuotaError } from '../web/source-store.js';
-import { imageThumbnailUrl, loadImageFile, prepareImageForExport } from '../web/image.js';
+import { imageThumbnailUrl, loadImageFile, prepareImageForExport, recompressJpeg } from '../web/image.js';
 import { closePdf, pdfThumbnailUrl, renderPdfPage } from '../web/pdf-view.js';
 import { loadMarkFont } from '../web/fonts.js';
 import { downloadBlob } from '../web/save.js';
@@ -71,6 +72,7 @@ const els = {
   fileName: $('#file-name'),
   paper: $('#paper'),
   quality: $('#quality'),
+  compress: $('#compress'),
   inputPhotos: $('#input-photos'),
   inputCamera: $('#input-camera'),
   inputFiles: $('#input-files'),
@@ -149,6 +151,7 @@ function saveStateNow() {
     fileName: els.fileName.value,
     paper: els.paper.value,
     quality: els.quality.value,
+    compress: els.compress.value,
     step: easyStep,
     savedAt: Date.now(),
   };
@@ -202,6 +205,7 @@ async function restoreState() {
   els.fileName.value = state.fileName ?? '';
   if (PAPER_MODES.includes(state.paper)) els.paper.value = state.paper;
   if (QUALITY_PRESETS[state.quality]) els.quality.value = state.quality;
+  if (['none', ...Object.keys(COMPRESS_LEVELS)].includes(state.compress)) els.compress.value = state.compress;
   easyStep = ['capture', 'confirm', 'save'].includes(state.step) ? state.step : 'confirm';
 }
 
@@ -391,13 +395,39 @@ async function buildPdf(target, title, progress = showBusy) {
   const imageTotal = target.pages.filter((p) => p.content.type === 'image').length;
   let imageDone = 0;
   progress('PDFを作成中…');
+  // PDFの圧縮（詳細モードだけ）。読み込んだPDFの中の大きな画像を縮小し直す
+  const level = mode === 'detail' ? els.compress.value : 'none';
+  const hasPdf = target.pages.some((p) => p.content.type === 'pdf');
+  const compress =
+    level !== 'none' && hasPdf
+      ? {
+          level,
+          recompressJpeg: (input) => {
+            progress('PDFの中の画像を圧縮中…');
+            return recompressJpeg(input);
+          },
+          onResult: (result) => (lastCompression = result),
+        }
+      : undefined;
+  lastCompression = null;
   return exportPdf(target, {
     ...exportOptions(() => {
       imageDone += 1;
       progress(`PDFを作成中… ${imageDone} / ${imageTotal}`);
     }),
     title,
+    compress,
   });
+}
+
+/** 最後に作ったPDFで、圧縮した画像の数と大きさ（お知らせに使う） */
+let lastCompression = null;
+
+/** 圧縮した結果の説明（圧縮しなかったときは空） */
+function compressionSummary() {
+  if (!lastCompression) return '';
+  if (lastCompression.count === 0) return '・圧縮できる画像はありませんでした';
+  return `・画像${lastCompression.count}枚を圧縮（${formatBytes(lastCompression.before)}→${formatBytes(lastCompression.after)}）`;
 }
 
 /** 書き出しの設定（用紙・画質）と、中身の取り出し方 */
@@ -451,7 +481,7 @@ async function createPdf() {
     const bytes = await buildPdf(doc, stripExtension(fileName));
     deliver(new Blob([bytes], { type: 'application/pdf' }), fileName, {
       title: 'PDFができました',
-      summary: `${doc.pages.length}ページ`,
+      summary: `${doc.pages.length}ページ${compressionSummary()}`,
     });
   } catch (error) {
     console.error(error);
@@ -1112,7 +1142,7 @@ for (const input of [els.inputPhotos, els.inputCamera, els.inputFiles]) {
   });
 }
 
-for (const input of [els.fileName, els.paper, els.quality]) {
+for (const input of [els.fileName, els.paper, els.quality, els.compress]) {
   input.addEventListener('change', saveStateSoon);
 }
 

@@ -692,6 +692,13 @@ body.has-bottom-bar .app-version { bottom: calc(var(--bottom-bar, 0px) + 6px); }
         <option value="high">高画質</option>
       </select>
     </label>
+    <label class="field detail-only" title="読み込んだPDFの中の大きな画像を縮小して、ファイルを小さくします">PDFの圧縮
+      <select id="compress">
+        <option value="none">しない</option>
+        <option value="standard">する</option>
+        <option value="strong">強め</option>
+      </select>
+    </label>
     <p class="hint detail-only" id="merge-hint" hidden>※ PDFのしおり（目次）やリンクは引き継がれません</p>
     <p class="hint marks-status" id="marks-status" hidden></p>
     <!-- かんたんモードでは、画面下のバー（親指で押しやすい場所）に「PDFを作成」を出す -->

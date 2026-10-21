@@ -6,6 +6,7 @@
 import { PDFDocument, degrees, rgb } from '../../vendor/pdf-lib/pdf-lib.esm.min.js';
 import { imagePageLayout } from './layout.js';
 import { hasMarks, marksForPage, normalizeMarks, toPageSpace } from './marks.js';
+import { compressImages } from './compress.js';
 import { normalizeRotation } from './page-list.js';
 
 export const APP_NAME = 'RelaPDF';
@@ -48,12 +49,14 @@ export async function inspectPdf(bytes) {
  * @param {Date} [options.date] 作成日時
  * @param {() => Promise<{bytes: Uint8Array, fontkit: object}>} [options.getFont]
  *   書き込み（doc.marks）に使う日本語フォントと fontkit を返す。書き込みがあるときだけ呼ぶ
+ * @param {{ level: 'standard'|'strong', recompressJpeg: Function, onResult?: (result: object) => void }} [options.compress]
+ *   読み込んだPDFの中の画像を縮小し直す（compress.js）。写真のページは画質の設定で縮小済みなので対象外
  * @param {{ offset: number, total: number }} [options.markNumbering]
  *   書き込みのページ番号の数え方を変える（見本として一部のページだけ書き出すとき。offset は最初のページが元の何ページ目か）
  * @returns {Promise<Uint8Array>}
  */
 export async function exportPdf(doc, options) {
-  const { getSourceBytes, getImage, getFont, markNumbering, paper = 'a4', title, date = new Date() } = options;
+  const { getSourceBytes, getImage, getFont, markNumbering, compress, paper = 'a4', title, date = new Date() } = options;
   if (doc.pages.length === 0) throw new Error('ページがありません');
 
   // updateMetadata: false にしないと、保存時に作成者などが pdf-lib の名前で上書きされる
@@ -66,6 +69,11 @@ export async function exportPdf(doc, options) {
 
   // PDFのページは元データごとにまとめてコピーする（フォントなどの共有データを重複させないため）
   const copied = await copyPdfPages(doc, out, getSourceBytes);
+  // この時点で out に入っているのは、読み込んだPDFのページの中身だけ（写真はまだ入れていない）
+  if (compress) {
+    const result = await compressImages(out, compress.level, { recompressJpeg: compress.recompressJpeg });
+    compress.onResult?.(result);
+  }
 
   for (const page of doc.pages) {
     const { content } = page;

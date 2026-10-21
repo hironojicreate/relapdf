@@ -167,6 +167,28 @@ export async function prepareImageForExport(blob, { quality = 'standard', paper 
   }
 }
 
+/**
+ * PDFの中のJPEG画像を、縮小・画質を下げて作り直す（PDFの圧縮用。compress.js から呼ぶ）。
+ * PDFの中の画像は、写真の回転情報（EXIF）を無視して表示されるので、ここでも回転させない。
+ * @returns {Promise<{bytes: Uint8Array, width: number, height: number} | null>} 作れなかったときは null
+ */
+export async function recompressJpeg({ bytes, width, height, targetWidth, targetHeight, quality }) {
+  let bitmap;
+  try {
+    bitmap = await createImageBitmap(new Blob([bytes], { type: 'image/jpeg' }), { imageOrientation: 'none' });
+  } catch {
+    return null;
+  }
+  try {
+    // 読み込んだ大きさが違うとき（回転情報が反映されたなど）は、触らない
+    if (bitmap.width !== width || bitmap.height !== height) return null;
+    const blob = await canvasToBlob(drawResized(bitmap, targetWidth, targetHeight), 'image/jpeg', quality);
+    return { bytes: new Uint8Array(await blob.arrayBuffer()), width: targetWidth, height: targetHeight };
+  } finally {
+    bitmap.close();
+  }
+}
+
 /** サムネイル用の小さな画像を作り、表示用のURLを返す（4点補正・書類モードを反映する） */
 export async function imageThumbnailUrl(blob, maxSide, { perspective = null, filter = 'none' } = {}) {
   const decoded = await decodeImage(blob);
