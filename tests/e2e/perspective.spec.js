@@ -234,7 +234,7 @@ test('補正画面は見つけた四隅から始まり、「自動検出」で�
   await openEditor(page);
   await page.click('[data-editor="reset"]');
   await page.click('[data-editor="detect"]');
-  await expect(page.locator('.editor-hint')).toHaveText('書類の四隅に、丸を合わせてください');
+  await expect(page.locator('#editor .editor-hint')).toHaveText('書類の四隅に、丸を合わせてください');
   await page.click('[data-editor="apply"]');
   expectNearPaper((await pageState(page)).perspective.corners);
 });
@@ -243,5 +243,5 @@ test('四隅が見つからない写真で「自動検出」を押すと、そ�
   await addPhoto(page, 'photo-landscape.jpg');
   await openEditor(page);
   await page.click('[data-editor="detect"]');
-  await expect(page.locator('.editor-hint')).toContainText('見つけられませんでした');
+  await expect(page.locator('#editor .editor-hint')).toContainText('見つけられませんでした');
 });

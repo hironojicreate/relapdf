@@ -11,7 +11,8 @@ RelaPDFの中心となるデータ構造です。実装は `src/core/page-list.j
     "src_...": Source,
   },
   pages: [Page, ...],      // ページの並び。この順番がそのまま出力の順番になる
-  marks: Marks | null      // 書き込み（ページ番号など）。なくてもよい（M6で追加。古いデータにはない）
+  marks: Marks | null,     // 書き込み（ページ番号など）。なくてもよい（M6で追加。古いデータにはない）
+  forms: { [sourceId]: { 入力欄の名前: 文字 | true/false } }  // フォーム入力。なくてもよい（M6）
 }
 ```
 
@@ -40,6 +41,7 @@ RelaPDFの中心となるデータ構造です。実装は `src/core/page-list.j
 | `rotation` | 0 \| 90 \| 180 \| 270 | ユーザーが付けた回転（右回り）。PDFにもともと付いている回転とは別に持ち、出力するときに足し合わせる |
 | `perspective` | `null` \| Perspective | 4点補正。画像のページだけに使える |
 | `filter` | `'none'` \| `'document'` | 色補正。`'document'` は書類モード（背景を白く・文字をくっきり） |
+| `annotations` | Annotation[]（なくてもよい） | 注釈（文字・図形・署名や印鑑の画像）。下の「Annotation」 |
 
 ### content の種類
 
@@ -62,6 +64,25 @@ RelaPDFの中心となるデータ構造です。実装は `src/core/page-list.j
 ```
 
 座標の基準は「写真の回転情報を反映したあと、ユーザーの回転をかける前」の元画像です。書類の端が写真からはみ出していても補正できるよう、写真の外にも幅・高さの25%まで置けます（`PERSPECTIVE_MARGIN`）。はみ出した部分は白で書き出します。座標を割合で持つのは、縮小した画像でも元の画像でも同じ値を使えるようにするためです。
+
+## Annotation（注釈）
+
+ページの上に置く文字・図形・画像です（`src/core/annotations.js`）。位置は「ユーザーの回転をかける前」のページに対する0〜1の割合（左上が原点）で持つので、あとからページを回転しても、注釈はページの中身と一緒に回ります。
+
+| type | 項目 |
+|---|---|
+| `text` | `x, y`（文字の左上）, `text`（改行あり）, `size`（ページの幅に対する割合）, `color`, `rotation` |
+| `image` | `x, y`（画像の左上）, `w, h`（どちらもページの幅に対する割合）, `sourceId`, `rotation` |
+| `rect` / `ellipse` / `highlight` | `x, y, w, h`, `color`（`highlight` はマーカー。半透明で塗る） |
+| `line` / `arrow` | `x1, y1, x2, y2`, `color` |
+
+- どれも `id` を持つ。`color` は `red` `blue` `black` `green` `yellow`
+- `rotation`：文字や画像を、回転前のページに対して右に回す角度。回転したページに置くとき、画面で見て正しい向き（横書き）になるよう、ページの回転と逆の角度にする
+- 画像の注釈が使う元データ（署名・印鑑）は、`kind: 'image'` で `asset: true` の Source として登録する。ページにはならない。`pruneSources` は、注釈で使っている画像を残す
+
+## フォーム入力（forms）
+
+読み込んだPDFに入力欄があるとき、入力した値を `forms[sourceId][入力欄の名前]` に持ちます（`src/core/forms.js`）。書き出すときに元のPDFの入力欄へ値を入れ、入力欄を平坦化（ページの中身にする）してからページをコピーします。PDFの Source には、入力欄の数 `formFieldCount` を持ちます。
 
 ## Marks（書き込み）
 
@@ -107,6 +128,8 @@ PDFを書き出すときに、すべてのページへ書き込む文字の設�
 | `setPerspective(doc, pageId, perspective \| null)` | 4点補正を設定する・外す |
 | `setFilter(doc, pageIds, filter)` | 色補正を設定する |
 | `setMarks(doc, marks \| null)` | 書き込みを設定する・外す |
+| `setAnnotations(doc, pageId, annotations)` | ページの注釈を置き換える（空の配列で外す） |
+| `setFormValues(doc, sourceId, values \| null)` | フォーム入力の値を設定する・外す |
 | `pruneSources(doc)` | 使われていない元データを取り除く |
 | `extractPages(doc, pageIds)` | 選んだページを新しいページリストとして取り出す |
 | `splitDocument(doc, splitBefore)` | 指定したページの手前で区切って複数に分ける |

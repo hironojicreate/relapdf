@@ -12,9 +12,14 @@ const pageState = (page, i = 0) => page.evaluate((index) => window.__relapdf.get
 const paperBrightness = (page, i = 0) =>
   cards(page)
     .nth(i)
-    .locator('.thumb img')
+    .locator('.thumb img[src^="blob:"]')
     .evaluate(async (img) => {
-      await img.decode();
+      // 描き直しの途中などで読めないときは NaN を返し、expect.poll でやり直す
+      try {
+        await img.decode();
+      } catch {
+        return NaN;
+      }
       const c = document.createElement('canvas');
       c.width = img.naturalWidth;
       c.height = img.naturalHeight;
@@ -36,8 +41,9 @@ async function addDocumentPhoto(page, mode = 'easy') {
 test('かんたんモードで書類の写真を取り込むと、書類モードになり紙が白くなる。補正画面で外せる', async ({ page }) => {
   await addDocumentPhoto(page);
   expect((await pageState(page)).filter).toBe('document');
-  await expect.poll(() => paperBrightness(page)).toBeGreaterThan(248);
-  const white = await paperBrightness(page);
+  // サムネイルは描き直されることがあるので、読み取りは失敗したらやり直す
+  let white = 0;
+  await expect.poll(async () => (white = await paperBrightness(page))).toBeGreaterThan(248);
 
   await cards(page).nth(0).locator('[data-op="perspective"].icon-btn').click();
   await expect(page.locator('#editor')).not.toHaveClass(/loading/);
