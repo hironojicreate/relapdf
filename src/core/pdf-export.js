@@ -3,7 +3,7 @@
 // pdf-lib を使う。ブラウザでもNode.jsでも同じファイルを読み込めるよう、vendor/ の同梱版を相対パスで読む。
 // 画像の加工（縮小・4点補正・色補正）はブラウザ側で行い、出来上がった画像だけを受け取る。
 
-import { PDFDocument, degrees, rgb } from '../../vendor/pdf-lib/pdf-lib.esm.min.js';
+import { PDFDocument, PDFName, degrees, rgb } from '../../vendor/pdf-lib/pdf-lib.esm.min.js';
 import { imagePageLayout } from './layout.js';
 import { hasMarks, marksForPage, normalizeMarks, toPageSpace } from './marks.js';
 import { compressImages } from './compress.js';
@@ -19,6 +19,21 @@ export class EncryptedPdfError extends Error {
   constructor() {
     super('パスワード付きのPDFは、今はまだ使えません');
     this.name = 'EncryptedPdfError';
+  }
+}
+
+/**
+ * 暗号化の情報（/Encrypt）がそろっているか。そろっていれば、パスワードを聞いて開ける見込みがある。
+ * そろっていなければ、ファイルが壊れている。
+ */
+export async function hasValidEncryption(bytes) {
+  try {
+    const pdf = await PDFDocument.load(bytes, { ignoreEncryption: true, updateMetadata: false });
+    const encrypt = pdf.context.lookup(pdf.context.trailerInfo.Encrypt);
+    if (!encrypt?.get) return false;
+    return ['Filter', 'O', 'U', 'R'].every((key) => encrypt.get(PDFName.of(key)) !== undefined);
+  } catch {
+    return false;
   }
 }
 

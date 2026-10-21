@@ -32,7 +32,7 @@ import {
 import { describeMarks, hasMarks } from '../core/marks.js';
 import { hasRedactions } from '../core/annotations.js';
 import { COMPRESS_LEVELS } from '../core/compress.js';
-import { exportPdf, inspectPdf } from '../core/pdf-export.js';
+import { EncryptedPdfError, exportPdf, hasValidEncryption, inspectPdf } from '../core/pdf-export.js';
 import { defaultFileName, sanitizeFileName, stripExtension } from '../core/filename.js';
 import { PAPER_MODES, QUALITY_PRESETS } from '../core/layout.js';
 import { createSourceStore, isQuotaError } from '../web/source-store.js';
@@ -53,6 +53,8 @@ import { createToolsDialog } from './tools-dialog.js';
 import { createMarksDialog } from './marks-dialog.js';
 import { createFormsDialog } from './forms-dialog.js';
 import { createPropertiesDialog } from './properties-dialog.js';
+import { createPasswordPrompt, createProtectDialog } from './password-dialogs.js';
+import { WrongPasswordError, decryptPdf, encryptPdf } from '../web/qpdf.js';
 import { createLayoutDialog } from './layout-dialog.js';
 import { createCropEditor } from './crop-editor.js';
 import { cropFromDisplay, describeLayout } from '../core/imposition.js';
@@ -101,6 +103,7 @@ const els = {
   marksStatus: $('#marks-status'),
   formsStatus: $('#forms-status'),
   layoutStatus: $('#layout-status'),
+  protectStatus: $('#protect-status'),
   openForms: $('#open-forms'),
   doneTitle: $('#done-title'),
   doneMeta: $('#done-meta'),
@@ -247,6 +250,7 @@ function addFiles(fileList) {
   if (files.length === 0) return Promise.resolve();
   return serial(async () => {
     const before = doc;
+    const unlockedBefore = unlockedCount;
     let next = doc;
     const errors = [];
     try {
@@ -265,16 +269,29 @@ function addFiles(fileList) {
       setStep('confirm');
     }
     if (errors.length > 0) toast(errors.join('\n'), 'error');
+    else if (unlockedCount > unlockedBefore) toast('パスワードを外して読み込みました');
     else notifyAutoCorrected(autoCorrectedIds(before, next));
   });
 }
 
 async function addFile(current, file) {
   if (isPdf(file)) {
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    const { pageCount, formFieldCount } = await inspectPdf(bytes);
-    const source = { kind: 'pdf', name: file.name, mimeType: 'application/pdf', byteLength: file.size, pageCount, formFieldCount };
-    return addSourceWithBlob(current, source, file);
+    let bytes = new Uint8Array(await file.arrayBuffer());
+    let info;
+    let unlocked = false;
+    try {
+      info = await inspectPdf(bytes);
+    } catch (error) {
+      if (!(error instanceof EncryptedPdfError)) throw error;
+      // パスワード付きのPDF：パスワードを外してから読み込む（外したものを端末に保存する）
+      bytes = await unlockPdf(bytes, file.name);
+      info = await inspectPdf(bytes);
+      unlocked = true;
+    }
+    const blob = unlocked ? new Blob([bytes], { type: 'application/pdf' }) : file;
+    const { pageCount, formFieldCount } = info;
+    const source = { kind: 'pdf', name: file.name, mimeType: 'application/pdf', byteLength: blob.size, pageCount, formFieldCount };
+    return addSourceWithBlob(current, source, blob);
   }
   if (isImage(file)) {
     const image = await loadImageFile(file);
@@ -432,7 +449,7 @@ async function buildPdf(original, title, progress = showBusy) {
         }
       : undefined;
   lastCompression = null;
-  return exportPdf(target, {
+  const bytes = await exportPdf(target, {
     ...exportOptions(() => {
       imageDone += 1;
       progress(`PDFを作成中… ${imageDone} / ${imageTotal}`);
@@ -440,6 +457,9 @@ async function buildPdf(original, title, progress = showBusy) {
     title,
     compress,
   });
+  if (!exportPassword) return bytes;
+  progress('パスワードをかけています…');
+  return encryptPdf(bytes, exportPassword);
 }
 
 const REDACT_DPI = 200; // 墨消ししたページを画像にするときの細かさ
@@ -607,6 +627,54 @@ const layoutDialog = createLayoutDialog({
     } finally {
       closePdf(id);
     }
+  },
+});
+
+// ---- パスワード ----
+
+const passwordPrompt = createPasswordPrompt();
+
+/**
+ * パスワード付きのPDFのパスワードを外す。編集などの制限だけのPDFは、聞かずに外す。
+ * 開くときのパスワードが必要なら、聞く（違えばもう一度）。キャンセルしたらエラーにする。
+ */
+async function unlockPdf(bytes, name) {
+  if (!(await hasValidEncryption(bytes))) {
+    throw new Error('パスワード付きのPDFを読み込めませんでした（ファイルが壊れている可能性があります）');
+  }
+  try {
+    return await decryptPdf(bytes);
+  } catch (error) {
+    if (!(error instanceof WrongPasswordError)) throw error;
+  }
+  hideBusy();
+  let wrong = false;
+  for (;;) {
+    const password = await passwordPrompt.ask(name, wrong);
+    if (password === null) throw new Error('パスワードが必要なため、読み込みませんでした');
+    showBusy('パスワードを外しています…');
+    try {
+      const unlocked = await decryptPdf(bytes, password);
+      unlockedCount += 1;
+      return unlocked;
+    } catch (error) {
+      if (!(error instanceof WrongPasswordError)) throw error;
+      hideBusy();
+      wrong = true;
+    }
+  }
+}
+let unlockedCount = 0;
+
+/** 書き出すPDFにかけるパスワード。端末には保存しない（アプリを閉じると消える） */
+let exportPassword = '';
+
+const protectDialog = createProtectDialog({
+  getPassword: () => exportPassword,
+  onApply: (password) => {
+    exportPassword = password;
+    render();
+    toast(password ? 'パスワードを設定しました（PDFを作成するときにかけます）' : 'パスワードを外しました');
   },
 });
 
@@ -844,6 +912,7 @@ function render() {
   const marks = describeMarks(doc.marks);
   els.marksStatus.hidden = marks.length === 0;
   els.marksStatus.textContent = `書き込み：${marks.join('・')}（PDFを作成するときに、すべてのページに書き込みます）`;
+  els.protectStatus.hidden = !exportPassword;
   const layout = describeLayout(doc.layout);
   els.layoutStatus.hidden = !layout;
   els.layoutStatus.textContent = `用紙・割付：${layout}（PDFを作成するときに並べ直します）`;
@@ -1255,6 +1324,9 @@ function onAction(action) {
       break;
     case 'open-layout':
       layoutDialog.open();
+      break;
+    case 'open-protect':
+      protectDialog.open();
       break;
     case 'open-properties':
       propertiesDialog.open();

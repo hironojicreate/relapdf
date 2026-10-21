@@ -118,3 +118,14 @@ test('文書のプロパティ（タイトル・作成者・件名・キーワ�
   assert.equal(pdf.getKeywords(), '見積 2026 急ぎ');
   assert.equal(setProperties(doc, { title: ' ' }).properties, null);
 });
+
+test('暗号化の情報がそろっているかを見分ける（パスワードを聞くか、壊れたファイルとして扱うか）', async () => {
+  const { hasValidEncryption } = await import('../../src/core/pdf-export.js');
+  assert.equal(await hasValidEncryption(await fixture('locked.pdf')), true);
+  const broken = await PDFDocument.create();
+  broken.addPage();
+  broken.context.trailerInfo.Encrypt = broken.context.register(broken.context.obj({ Filter: 'Standard' }));
+  assert.equal(await hasValidEncryption(await broken.save({ useObjectStreams: false })), false);
+  assert.equal(await hasValidEncryption(await fixture('sample-3pages.pdf')), false);
+  await assert.rejects(inspectPdf(await fixture('locked.pdf')), EncryptedPdfError);
+});

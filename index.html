@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self' data:; connect-src 'self' blob: data:; worker-src 'self' blob:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self' data:; connect-src 'self' blob: data:; worker-src 'self' blob:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'">
 <title>RelaPDF</title>
 <meta name="description" content="写真をPDFに、PDFの結合・ページ整理も。ブラウザの中だけで動き、ファイルは端末の外に出ません。">
 <meta name="theme-color" content="#2f6df6">
@@ -719,6 +719,7 @@ body.has-bottom-bar .app-version { bottom: calc(var(--bottom-bar, 0px) + 6px); }
           <button type="button" class="btn" data-action="open-marks" title="ページ番号・ヘッダー/フッター・透かし・スタンプを書き込む"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>書き込み</button>
           <button type="button" class="btn" data-action="open-forms" id="open-forms" disabled title="入力欄（フォーム）のあるPDFを読み込むと使えます"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 10h6M7 14h10"/></svg>フォーム入力</button>
           <button type="button" class="btn" data-action="open-layout" title="用紙サイズを変える・2in1や4in1にまとめる"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="1.5"/><path d="M12 5v14"/></svg>用紙・割付</button>
+          <button type="button" class="btn" data-action="open-protect" title="作成するPDFに、開くときのパスワードをかける"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>パスワード</button>
           <button type="button" class="btn" data-action="open-properties" title="タイトル・作成者・件名・キーワード"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></svg>プロパティ</button>
           <button type="button" class="btn" data-action="open-extract" title="指定したページだけで新しいPDFを作る"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M12 11v6M9 14l3 3 3-3"/></svg>取り出す</button>
           <button type="button" class="btn" data-action="open-split" title="いくつかのPDFに分ける"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12M6 21h12"/><path d="M12 3v7M12 14v7"/><path d="M4 12h16"/></svg>分割</button>
@@ -770,6 +771,7 @@ body.has-bottom-bar .app-version { bottom: calc(var(--bottom-bar, 0px) + 6px); }
     <p class="hint marks-status" id="marks-status" hidden></p>
     <p class="hint marks-status" id="forms-status" hidden></p>
     <p class="hint marks-status" id="layout-status" hidden></p>
+    <p class="hint marks-status" id="protect-status" hidden>パスワード：設定済み（PDFを作成するときにかけます。アプリを閉じると消えます）</p>
     <!-- かんたんモードでは、画面下のバー（親指で押しやすい場所）に「PDFを作成」を出す -->
     <button type="button" class="btn primary detail-only" data-action="export">PDFを作成（ダウンロードします）</button>
   </div>
@@ -1057,6 +1059,35 @@ body.has-bottom-bar .app-version { bottom: calc(var(--bottom-bar, 0px) + 6px); }
     <div class="actions row">
       <button type="button" class="btn subtle danger-text marks-clear" data-action="layout-clear">元に戻す</button>
       <button type="button" class="btn subtle" data-action="layout-cancel">キャンセル</button>
+      <button type="submit" class="btn primary">決定</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="password-dialog" class="tool-dialog" aria-labelledby="password-title">
+  <form id="password-form" novalidate>
+    <h2 id="password-title">パスワードが必要です</h2>
+    <p class="meta">「<span id="password-file"></span>」はパスワード付きのPDFです。開くときのパスワードを入れてください。読み込むと、このアプリの中ではパスワードを外したものとして使います。</p>
+    <label class="field">パスワード<input type="password" id="password-input" autocomplete="off"></label>
+    <p class="form-error" id="password-error" role="alert"></p>
+    <div class="actions row">
+      <button type="button" class="btn subtle" data-action="password-cancel">読み込まない</button>
+      <button type="submit" class="btn primary">開く</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="protect-dialog" class="tool-dialog" aria-labelledby="protect-title">
+  <form id="protect-form" novalidate>
+    <h2 id="protect-title">パスワードをかける</h2>
+    <p class="meta">作成するPDFに、開くときのパスワードをかけます（AES-256）。パスワードは端末に保存しません。アプリを閉じたり読み込み直したりすると消えるので、作成する前にもう一度設定してください。</p>
+    <label class="field">パスワード<input type="password" id="protect-password" autocomplete="new-password"></label>
+    <label class="field">もう一度<input type="password" id="protect-again" autocomplete="new-password"></label>
+    <label class="choice"><input type="checkbox" id="protect-show">パスワードを表示する</label>
+    <p class="form-error" id="protect-error" role="alert"></p>
+    <div class="actions row">
+      <button type="button" class="btn subtle danger-text marks-clear" data-action="protect-clear">パスワードを外す</button>
+      <button type="button" class="btn subtle" data-action="protect-cancel">キャンセル</button>
       <button type="submit" class="btn primary">決定</button>
     </div>
   </form>

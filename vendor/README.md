@@ -9,6 +9,7 @@ CDNは使わず、ここに置いたファイルだけを読み込みます（�
 | `fflate/` | [fflate](https://github.com/101arrowz/fflate) | 0.8.3 | MIT（`fflate/LICENSE`） | `esm/browser.js` → `fflate.mjs` |
 | `fontkit/` | [@pdf-lib/fontkit](https://github.com/Hopding/fontkit) | 1.1.1 | MIT（`fontkit/LICENSE`） | `dist/fontkit.umd.min.js` → `fontkit.mjs`（下記の変更あり） |
 | `fonts/` | [BIZ UDゴシック](https://github.com/googlefonts/morisawa-biz-ud-gothic)（Regular） | Google Fonts 版 | SIL OFL 1.1（`fonts/OFL.txt`） | `ofl/bizudgothic/BIZUDGothic-Regular.ttf`（下記の変更あり） |
+| `qpdf/` | [qpdf](https://github.com/qpdf/qpdf) 12.2.0（[@neslinesli93/qpdf-wasm](https://github.com/neslinesli93/qpdf-wasm) 0.3.0 の WebAssembly 版） | 12.2.0 | Apache 2.0（`qpdf/LICENSE`）、包む部分は ISC（`qpdf/LICENSE-wrapper`） | `dist/qpdf.js` → `qpdf.mjs`、`dist/qpdf.wasm` |
 | `pdfjs/` | [PDF.js](https://github.com/mozilla/pdf.js)（pdfjs-dist） | 6.4.299 | Apache 2.0（`pdfjs/LICENSE`） | `legacy/build/pdf.min.mjs`、`legacy/build/pdf.worker.min.mjs`、`cmaps/`、`standard_fonts/`、`iccs/`、`wasm/` |
 
 ## PDF.js について
@@ -35,3 +36,10 @@ CDNは使わず、ここに置いたファイルだけを読み込みます（�
   ```
   - ヒンティング（画面の小さな文字をくっきり見せるための情報）、縦書き・文字の置き換えの情報を除いています。PDFに書き込む横書きの文字には使わないためです。
 - WOFF2 にするともっと小さくなりますが、fontkit で使う文字だけを取り出せなかったため、TTF のままにしています。
+
+## qpdf について（PDFのパスワードをかける・外すため）
+
+- pdf-lib は暗号化に対応していないので、qpdf を WebAssembly にしたものを使います。`qpdf.js` の最後に `export default Module;` を1行足して、ES Modules として読めるようにしています（中身は変えていません）。
+- WebAssembly を動かすため、`index.html` の CSP に `'wasm-unsafe-eval'` を足しています（JavaScript の文字列を実行する `eval` は許していません）。
+- この版の qpdf は、エラーの文を受け取れません（ブラウザの console に出るだけ）。成功・失敗だけで判断しています（`src/web/qpdf.js`）。
+- WebAssembly の中には、qpdf が使う zlib（zlib License）と libjpeg-turbo（IJG License・BSD 3条項）も入っています。
