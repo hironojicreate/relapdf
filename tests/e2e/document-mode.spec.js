@@ -49,9 +49,7 @@ test('かんたんモードで書類の写真を取り込むと、書類モー�
 
   // 書き出したPDFにも、書類モードの有無が反映される（ここでは外したまま書き出せることを確かめる）
   await page.click('[data-action="go-save"]');
-  await page.click('[data-action="export"]:visible');
-  await expect(page.locator('#result-dialog')).toBeVisible({ timeout: 20_000 });
-  const [download] = await Promise.all([page.waitForEvent('download'), page.click('[data-action="download"]')]);
+  const [download] = await Promise.all([page.waitForEvent('download'), page.click('[data-action="export"]:visible')]);
   const pdf = await PDFDocument.load(await readFile(await download.path()));
   expect(pdf.getPageCount()).toBe(1);
 });

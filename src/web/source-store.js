@@ -5,6 +5,9 @@
 // データは端末の外には出ない。IndexedDBが使えない環境では、メモリだけで動く（再開はできない）。
 //
 // ページリストには中身を持たせず、sourceId でここから引く。
+//
+// iPhoneのSafariは、アプリをしばらく裏に回すとデータベースとのつながりが切れることがある。
+// そのときは、つなぎ直してもう一度だけ試す（容量不足のときは試し直さない）。
 
 const DB_NAME = 'relapdf';
 const DB_VERSION = 1;
@@ -30,6 +33,11 @@ function openDatabase() {
   });
 }
 
+/** 端末の空き容量（このサイトが使える保存領域）が足りないときのエラーか */
+export function isQuotaError(error) {
+  return error?.name === 'QuotaExceededError' || error?.code === 22;
+}
+
 /** IndexedDB の1回の操作を Promise にする */
 function run(db, storeName, mode, operation) {
   return new Promise((resolve, reject) => {
@@ -49,18 +57,50 @@ function run(db, storeName, mode, operation) {
  */
 export async function createSourceStore() {
   let db = null;
+  let available = true; // 最初に開けなかったときは、メモリだけで動く
   try {
-    db = await openDatabase();
+    db = watch(await openDatabase());
   } catch (error) {
+    available = false;
     console.warn('作業途中の自動保存は使えません', error);
   }
   const cache = new Map(); // sourceId → Blob（読み込んだものはメモリにも置いて速くする）
 
-  // 書き込みに失敗したら（容量不足など）、以後はメモリだけで動く
-  async function write(storeName, operation) {
-    if (!db) return;
+  /** つながりが切れたら、次に使うときにつなぎ直す */
+  function watch(database) {
+    database.onclose = () => {
+      if (db === database) db = null;
+    };
+    database.onversionchange = () => database.close();
+    return database;
+  }
+
+  async function connection() {
+    if (!db) db = watch(await openDatabase());
+    return db;
+  }
+
+  /** 1回の操作。つながりが切れていたら、つなぎ直してもう一度だけ試す */
+  async function request(storeName, mode, operation) {
     try {
-      await run(db, storeName, 'readwrite', operation);
+      return await run(await connection(), storeName, mode, operation);
+    } catch (error) {
+      if (isQuotaError(error)) throw error;
+      console.warn('端末の保存領域につなぎ直します', error);
+      try {
+        db?.close();
+      } catch {
+        // すでに閉じている
+      }
+      db = null;
+      return run(await connection(), storeName, mode, operation);
+    }
+  }
+
+  async function write(storeName, operation) {
+    if (!available) return;
+    try {
+      await request(storeName, 'readwrite', operation);
     } catch (error) {
       console.warn('端末への保存に失敗しました', error);
       throw error;
@@ -70,7 +110,7 @@ export async function createSourceStore() {
   return {
     /** 端末に保存できているか（false ならメモリだけ） */
     get persistent() {
-      return db !== null;
+      return available;
     },
 
     async put(sourceId, blob) {
@@ -83,7 +123,7 @@ export async function createSourceStore() {
     async get(sourceId) {
       const cached = cache.get(sourceId);
       if (cached) return cached;
-      const record = db ? await run(db, SOURCES, 'readonly', (store) => store.get(sourceId)) : undefined;
+      const record = available ? await request(SOURCES, 'readonly', (store) => store.get(sourceId)) : undefined;
       if (!record) throw new Error(`元データの中身が見つかりません: ${sourceId}`);
       const blob = new Blob([record.data], { type: record.type });
       cache.set(sourceId, blob);
@@ -101,8 +141,8 @@ export async function createSourceStore() {
 
     /** 保存されている元データのID一覧 */
     async keys() {
-      if (!db) return [...cache.keys()];
-      return run(db, SOURCES, 'readonly', (store) => store.getAllKeys());
+      if (!available) return [...cache.keys()];
+      return request(SOURCES, 'readonly', (store) => store.getAllKeys());
     },
 
     /** 作業中の状態（ページリストや設定）を保存する */
@@ -111,8 +151,8 @@ export async function createSourceStore() {
     },
 
     async loadState() {
-      if (!db) return null;
-      return (await run(db, STATE, 'readonly', (store) => store.get(STATE_KEY))) ?? null;
+      if (!available) return null;
+      return (await request(STATE, 'readonly', (store) => store.get(STATE_KEY))) ?? null;
     },
 
     /** すべて消す（「新しく作る」とき） */

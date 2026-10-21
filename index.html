@@ -666,7 +666,7 @@ body.has-bottom-bar .app-version { bottom: calc(var(--bottom-bar, 0px) + 6px); }
     </label>
     <p class="hint detail-only" id="merge-hint" hidden>※ PDFのしおり（目次）やリンクは引き継がれません</p>
     <!-- かんたんモードでは、画面下のバー（親指で押しやすい場所）に「PDFを作成」を出す -->
-    <button type="button" class="btn primary detail-only" data-action="export">PDFを作成</button>
+    <button type="button" class="btn primary detail-only" data-action="export">PDFを作成（ダウンロードします）</button>
   </div>
 </footer>
 
@@ -736,24 +736,15 @@ body.has-bottom-bar .app-version { bottom: calc(var(--bottom-bar, 0px) + 6px); }
 <input type="file" id="input-camera" accept="image/*" capture="environment" hidden>
 <input type="file" id="input-files" accept="application/pdf,.pdf,image/*" multiple hidden>
 
-<dialog id="result-dialog" aria-labelledby="result-title">
-  <div id="result-ready">
-    <h2 id="result-title">PDFができました</h2>
-    <p class="meta" id="result-meta"></p>
-    <div class="actions">
-      <button type="button" class="btn primary" data-action="share" id="share-button">送る・保存する</button>
-      <button type="button" class="btn" data-action="download" id="download-button">ダウンロード</button>
-      <button type="button" class="btn subtle" data-action="close-result">閉じる</button>
-    </div>
-  </div>
-  <div id="result-done" class="done" hidden>
+<dialog id="result-dialog" aria-labelledby="done-title">
+  <div id="result-done" class="done">
     <div class="done-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>
-    <h2 id="done-title" tabindex="-1">完了しました</h2>
+    <h2 id="done-title" tabindex="-1">保存しました</h2>
     <p class="meta" id="done-meta"></p>
     <div class="actions">
       <button type="button" class="btn primary" data-action="new-document">新しく作る</button>
       <button type="button" class="btn" data-action="close-result">このまま編集を続ける</button>
-      <button type="button" class="btn subtle" data-action="back-to-result">もう一度 送る・保存する</button>
+      <button type="button" class="btn subtle" data-action="download-again">もう一度ダウンロードする</button>
     </div>
   </div>
 </dialog>

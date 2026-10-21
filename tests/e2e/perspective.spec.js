@@ -61,8 +61,7 @@ test('四隅を動かして補正すると、サムネイルと書き出しに�
 
   // 縦長に補正したので、横長の写真でもA4の縦向きになる
   await page.click('[data-action="go-save"]');
-  await page.click('[data-action="export"]:visible');
-  const [download] = await Promise.all([page.waitForEvent('download'), page.click('[data-action="download"]')]);
+  const [download] = await Promise.all([page.waitForEvent('download'), page.click('[data-action="export"]:visible')]);
   const pdf = await PDFDocument.load(await readFile(await download.path()));
   const { width, height } = pdf.getPage(0).getSize();
   expect([Math.round(width), Math.round(height)]).toEqual([595, 842]);
@@ -181,8 +180,7 @@ test('四隅は写真の外（画面の端の方）まで動かせて、はみ�
   expect(Math.min(corners[0].x, corners[0].y)).toBeGreaterThanOrEqual(-0.25);
 
   await page.click('[data-action="go-save"]');
-  await page.click('[data-action="export"]:visible');
-  const [download] = await Promise.all([page.waitForEvent('download'), page.click('[data-action="download"]')]);
+  const [download] = await Promise.all([page.waitForEvent('download'), page.click('[data-action="export"]:visible')]);
   const pdf = await PDFDocument.load(await readFile(await download.path()));
   expect(pdf.getPageCount()).toBe(1);
 });

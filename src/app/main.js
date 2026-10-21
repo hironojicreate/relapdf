@@ -21,10 +21,10 @@ import {
 import { exportPdf, inspectPdf } from '../core/pdf-export.js';
 import { defaultFileName, sanitizeFileName, stripExtension } from '../core/filename.js';
 import { PAPER_MODES, QUALITY_PRESETS } from '../core/layout.js';
-import { createSourceStore } from '../web/source-store.js';
+import { createSourceStore, isQuotaError } from '../web/source-store.js';
 import { imageThumbnailUrl, loadImageFile, prepareImageForExport } from '../web/image.js';
 import { closePdf, pdfThumbnailUrl } from '../web/pdf-view.js';
-import { canShareFiles, downloadBlob, shareBlob } from '../web/save.js';
+import { downloadBlob } from '../web/save.js';
 import { currentMode, saveMode } from '../web/mode.js';
 import { loadDocumentMode } from '../web/document-mode.js';
 import { setupUpdater } from '../web/updater.js';
@@ -70,17 +70,12 @@ const els = {
   inputCamera: $('#input-camera'),
   inputFiles: $('#input-files'),
   resultDialog: $('#result-dialog'),
-  resultReady: $('#result-ready'),
   resultDone: $('#result-done'),
-  resultTitle: $('#result-title'),
-  resultMeta: $('#result-meta'),
   selectionCount: $('#selection-count'),
   selectAllButton: $('#select-all'),
   mergeHint: $('#merge-hint'),
   doneTitle: $('#done-title'),
   doneMeta: $('#done-meta'),
-  shareButton: $('#share-button'),
-  downloadButton: $('#download-button'),
   busy: $('#busy'),
   busyText: $('#busy-text'),
   toast: $('#toast'),
@@ -96,7 +91,7 @@ const thumbnails = new Map(); // `${sourceId}:${pageIndex}` → Promise<string>�
 let doc = createDocument();
 let mode = currentMode();
 let easyStep = 'confirm'; // ページがあるときの、かんたんモードの段階（'capture' | 'confirm' | 'save'）
-let lastExport = null; // { blob, fileName, title, summary }
+let lastExport = null; // { blob, fileName }（もう一度ダウンロードするため）
 let selected = new Set(); // 詳細モードで選んでいるページのID
 let selectionAnchor = null; // Shift+クリックで範囲を選ぶときの起点
 
@@ -140,6 +135,7 @@ function saveStateSoon() {
   saveTimer = setTimeout(saveStateNow, SAVE_DELAY);
 }
 
+let lastSaveErrorAt = 0;
 function saveStateNow() {
   clearTimeout(saveTimer);
   const state = {
@@ -152,14 +148,32 @@ function saveStateNow() {
   };
   return store.saveState(state).catch((error) => {
     console.warn(error);
-    toast('端末の空き容量が足りないため、作業途中の保存ができませんでした', 'error');
+    // 何度も続けて出さない（保存は操作のたびに行うため）
+    if (Date.now() - lastSaveErrorAt < 60_000) return;
+    lastSaveErrorAt = Date.now();
+    toast(
+      isQuotaError(error)
+        ? '端末の空き容量が足りないため、作業途中の保存ができませんでした。端末の写真やアプリを整理すると直ります'
+        : `作業途中の保存ができませんでした（${error?.name ?? 'エラー'}）。アプリを開き直すと直ることがあります`,
+      'error',
+    );
   });
 }
 
 /** 前回の作業が残っていれば、続きから再開する */
 async function restoreState() {
-  const state = await store.loadState().catch(() => null);
-  if (!state?.doc) return;
+  let state;
+  try {
+    state = await store.loadState();
+  } catch (error) {
+    console.warn('前回の作業を読み込めませんでした', error);
+    return;
+  }
+  if (!state?.doc) {
+    // 作業の記録がないのに中身だけ残っていたら（保存の途中で閉じた場合など）、消しておく
+    for (const key of await store.keys().catch(() => [])) await store.delete(key);
+    return;
+  }
   let restored;
   try {
     restored = deserializeDocument(state.doc);
@@ -408,60 +422,30 @@ async function createPdf() {
 }
 
 /**
- * できたファイルを渡す。
- * かんたんモード：「送る・保存する」「ダウンロード」のダイアログを出す
- * 詳細モード：すぐにダウンロードする（送る機能は、必要になったら追加する）
+ * できたファイルを渡す。どちらのモードも、すぐにダウンロードする（送る機能は、必要になったら追加する）。
+ * かんたんモード：終わったら「保存しました」の画面を出し、「新しく作る」などを選べるようにする
+ * 詳細モード：お知らせだけ出して、そのまま作業を続けられるようにする
  */
-function deliver(blob, fileName, { title, summary }) {
-  lastExport = { blob, fileName, title, summary };
-  if (mode === 'detail') {
-    downloadBlob(blob, fileName);
-    toast(`「${fileName}」をダウンロードしました（${summary}・${formatBytes(blob.size)}）`, 'info', { duration: 4000 });
-    return;
-  }
-  showResult();
+function deliver(blob, fileName, { summary }) {
+  lastExport = { blob, fileName };
+  downloadBlob(blob, fileName);
+  const message = `「${fileName}」をダウンロードしました（${summary}・${formatBytes(blob.size)}）`;
+  if (mode === 'detail') toast(message, 'info', { duration: 4000 });
+  else showDone('保存しました', message);
 }
 
-function showResult() {
-  const { blob, fileName, title, summary } = lastExport;
-  els.resultTitle.textContent = title;
-  els.resultMeta.textContent = `${fileName}（${summary}・${formatBytes(blob.size)}）`;
-  const shareable = canShareFiles();
-  els.shareButton.hidden = !shareable;
-  els.downloadButton.classList.toggle('primary', !shareable);
-  els.resultReady.hidden = false;
-  els.resultDone.hidden = true;
-  if (!els.resultDialog.open) els.resultDialog.showModal();
-}
-
-/** 送る・保存が終わったことを、ダイアログの中で知らせる */
+/** 保存が終わったことを、ダイアログで知らせる */
 function showDone(title, message) {
   els.doneTitle.textContent = title;
   els.doneMeta.textContent = message;
-  els.resultReady.hidden = true;
-  els.resultDone.hidden = false;
+  if (!els.resultDialog.open) els.resultDialog.showModal();
   els.doneTitle.focus();
 }
 
-async function shareResult() {
-  let result;
-  try {
-    result = await shareBlob(lastExport.blob, lastExport.fileName);
-  } catch (error) {
-    console.error(error);
-    toast('共有できませんでした。「ダウンロード」を試してください', 'error');
-    return;
-  }
-  // 共有シートを閉じただけ（キャンセル）のときは、そのまま選び直せるようにする
-  // 実際に送るのは、共有シートで選んだアプリ（LINE・メールなど）。送れたかどうかは、このアプリからは分からない
-  if (result === 'shared') {
-    showDone('完了しました', `「${lastExport.fileName}」を、選んだアプリに渡しました。送れたかどうかは、そのアプリで確かめてください`);
-  }
-}
-
-function downloadResult() {
+function downloadAgain() {
+  if (!lastExport) return;
   downloadBlob(lastExport.blob, lastExport.fileName);
-  showDone('保存しました', `「${lastExport.fileName}」をダウンロードしました`);
+  toast(`「${lastExport.fileName}」をもう一度ダウンロードしました`);
 }
 
 // ---- 最初からやり直す（数秒間は元に戻せる） ----
@@ -549,9 +533,10 @@ function render() {
   els.nextBar.hidden = !(easy && count > 0);
   els.exportBar.hidden = count === 0 || (easy && step !== 'save');
   els.count.textContent = `${count}ページ`;
-  els.nextCount.textContent = `（${count}ページ）`;
-  // 画面下のボタン（親指で押しやすい場所）：①「確認へ進む」、②「保存へ進む」、③「PDFを作成」
-  const next = { capture: ['確認へ進む', 'go-confirm'], confirm: ['保存へ進む', 'go-save'], save: ['PDFを作成', 'export'] }[step];
+  // ③はボタンの文字が長いので、ページ数は出さない（保存の画面に出ている）
+  els.nextCount.textContent = step === 'save' ? '' : `（${count}ページ）`;
+  // 画面下のボタン（親指で押しやすい場所）：①「確認へ進む」、②「保存へ進む」、③「PDFを作成（ダウンロードします）」
+  const next = { capture: ['確認へ進む', 'go-confirm'], confirm: ['保存へ進む', 'go-save'], save: ['PDFを作成（ダウンロードします）', 'export'] }[step];
   els.nextLabel.textContent = next[0];
   els.nextButton.dataset.action = easy ? next[1] : '';
   // ①に戻ってきたとき（ページがあるとき）は、追加で撮れることと、やり直せることを伝える
@@ -913,17 +898,11 @@ function onAction(action) {
     case 'export':
       createPdf();
       break;
-    case 'share':
-      shareResult();
-      break;
-    case 'download':
-      downloadResult();
+    case 'download-again':
+      downloadAgain();
       break;
     case 'close-result':
       els.resultDialog.close();
-      break;
-    case 'back-to-result':
-      showResult();
       break;
     case 'new-document':
       restart('新しく作り始めます');

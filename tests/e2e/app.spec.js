@@ -30,17 +30,14 @@ async function exportAndDownload(page) {
   // かんたんモードでは「保存へ進む」で3番目の段階に進んでから作成する
   const goSave = page.locator('[data-action="go-save"]');
   if (await goSave.isVisible()) await goSave.click();
-  let download;
+  // どちらのモードも、作成したらすぐにダウンロードする
+  const [download] = await Promise.all([page.waitForEvent('download'), page.click('[data-action="export"]:visible')]);
   if (await page.evaluate(() => document.body.classList.contains('mode-detail'))) {
-    // 詳細モードは、作成したらすぐにダウンロードする
-    [download] = await Promise.all([page.waitForEvent('download'), page.click('[data-action="export"]:visible')]);
     await expect(page.locator('#toast')).toContainText('ダウンロードしました');
     await expect(page.locator('#result-dialog')).toBeHidden();
   } else {
-    await page.click('[data-action="export"]:visible');
-    await expect(page.locator('#result-dialog')).toBeVisible();
-    [download] = await Promise.all([page.waitForEvent('download'), page.click('[data-action="download"]')]);
     await expect(page.locator('#done-title')).toHaveText('保存しました');
+    await expect(page.locator('#done-meta')).toContainText('ダウンロードしました');
   }
   const bytes = await readFile(await download.path());
   return { name: download.suggestedFilename(), pdf: await PDFDocument.load(bytes) };
@@ -166,33 +163,20 @@ test('一度開けば、オフラインでも起動してPDFを読み込める',
   expect(pdf.getPageCount()).toBe(3);
 });
 
-test('かんたんモード：送る（共有シート）が終わったら「完了しました」と表示し、新しく作り直せる', async ({ page }, testInfo) => {
-  // 共有シートの代わり：1回目はキャンセル、2回目は成功したことにする
-  await page.addInitScript(() => {
-    let calls = 0;
-    navigator.canShare = () => true;
-    navigator.share = async () => {
-      calls += 1;
-      if (calls === 1) throw new DOMException('cancel', 'AbortError');
-    };
-  });
+test('かんたんモード：作成するとすぐにダウンロードし、「保存しました」から新しく作り直せる', async ({ page }, testInfo) => {
   await page.goto('./');
-  await page.click('[data-mode="easy"]'); // 詳細モードには「送る」がない（すぐにダウンロードする）
+  await page.click('[data-mode="easy"]');
   await addFiles(page, [fixture('photo-landscape.jpg')], testInfo);
   await expect(cards(page)).toHaveCount(1);
-  const goSave = page.locator('[data-action="go-save"]');
-  if (await goSave.isVisible()) await goSave.click();
-  await page.click('[data-action="export"]:visible');
-  await expect(page.locator('#share-button')).toBeVisible();
+  await page.click('[data-action="go-save"]');
+  await expect(page.locator('#next-bar [data-action="export"]')).toHaveText('PDFを作成（ダウンロードします）');
+  const [first] = await Promise.all([page.waitForEvent('download'), page.click('[data-action="export"]:visible')]);
+  await expect(page.locator('#result-dialog')).toBeVisible();
+  await expect(page.locator('#done-title')).toHaveText('保存しました');
 
-  await page.click('[data-action="share"]');
-  await expect(page.locator('#result-ready')).toBeVisible(); // キャンセルしたときは選び直せる
-  await expect(page.locator('#result-done')).toBeHidden();
-
-  await page.click('[data-action="share"]');
-  await expect(page.locator('#result-done')).toBeVisible();
-  await expect(page.locator('#done-title')).toHaveText('完了しました');
-  await expect(page.locator('#done-meta')).toContainText('選んだアプリに渡しました');
+  // もう一度ダウンロードできる
+  const [again] = await Promise.all([page.waitForEvent('download'), page.click('[data-action="download-again"]')]);
+  expect(again.suggestedFilename()).toBe(first.suggestedFilename());
 
   await page.click('[data-action="new-document"]');
   await expect(page.locator('#result-dialog')).toBeHidden();

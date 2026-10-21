@@ -11,9 +11,9 @@ import { zipSync } from '../../vendor/fflate/fflate.mjs';
 import { IMAGE_FORMATS } from '../web/page-image.js';
 
 const TOOLS = {
-  extract: { title: 'ページを取り出す', description: '指定したページだけで、新しいPDFを作ります。', submit: 'PDFを作成' },
-  split: { title: 'PDFを分割する', description: 'いくつかのPDFに分けます。複数できたときはZIPにまとめます。', submit: '分割する' },
-  images: { title: '画像にする', description: 'ページを1枚ずつ画像にします。複数あるときはZIPにまとめます。', submit: '画像を作成' },
+  extract: { title: 'ページを取り出す', description: '指定したページだけで、新しいPDFを作ります。', submit: 'PDFを作成（ダウンロードします）' },
+  split: { title: 'PDFを分割する', description: 'いくつかのPDFに分けます。複数できたときはZIPにまとめます。', submit: '分割する（ダウンロードします）' },
+  images: { title: '画像にする', description: 'ページを1枚ずつ画像にします。複数あるときはZIPにまとめます。', submit: '画像を作成（ダウンロードします）' },
 };
 
 /** ページ範囲を、ファイル名に使える短い文字にする。例：[0,1,2,4] → "1-3_5" */
