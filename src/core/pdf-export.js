@@ -3,7 +3,22 @@
 // pdf-lib を使う。ブラウザでもNode.jsでも同じファイルを読み込めるよう、vendor/ の同梱版を相対パスで読む。
 // 画像の加工（縮小・4点補正・色補正）はブラウザ側で行い、出来上がった画像だけを受け取る。
 
-import { PDFDocument, PDFName, degrees, rgb } from '../../vendor/pdf-lib/pdf-lib.esm.min.js';
+import {
+  PDFDocument,
+  PDFName,
+  TextRenderingMode,
+  beginText,
+  degrees,
+  endText,
+  popGraphicsState,
+  pushGraphicsState,
+  rgb,
+  rotateAndSkewTextDegreesAndTranslate,
+  setCharacterSqueeze,
+  setFontAndSize,
+  setTextRenderingMode,
+  showText,
+} from '../../vendor/pdf-lib/pdf-lib.esm.min.js';
 import { imagePageLayout } from './layout.js';
 import { hasMarks, marksForPage, normalizeMarks, toPageSpace } from './marks.js';
 import { compressImages } from './compress.js';
@@ -150,6 +165,11 @@ export async function exportPdf(doc, options) {
   const annotated = built.filter(({ page }) => page.annotations?.length);
   if (annotated.length > 0) await drawAnnotations(out, annotated, { loadFont: () => fontFor(out), getAnnotationImage });
 
+  // 文字認識（OCR）の結果を、見えない文字として重ねる（文字を検索・コピーできるようにする）
+  // 写真のページは、読み取ったときと用紙の設定が違うと位置が合わないので、重ねない
+  const recognized = built.filter(({ page }) => page.ocr?.lines.length && (page.content.type !== 'image' || page.ocr.paper === paper));
+  if (recognized.length > 0) await drawOcrText(recognized, await fontFor(out));
+
   // トリミング：ページの見せる範囲（CropBox）を狭める
   for (const { pdfPage, page, baseRotation } of built) {
     if (!page.crop) continue;
@@ -242,6 +262,34 @@ async function drawAnnotations(out, annotated, { loadFont, getAnnotationImage })
   }
 }
 
+/** 文字認識の結果を、見えない文字（描かないが、検索・コピーできる）としてページに重ねる */
+async function drawOcrText(recognized, font) {
+  for (const { pdfPage, page, baseRotation } of recognized) {
+    const box = pdfPage.getCropBox();
+    const sideways = baseRotation === 90 || baseRotation === 270;
+    const frame = { width: sideways ? box.height : box.width, height: sideways ? box.width : box.height, rotation: page.rotation };
+    // 1行ずつ、行の高さを文字の大きさにした「文字の注釈」として位置を求める
+    const texts = page.ocr.lines.map((line, i) => ({
+      id: `ocr${i}`,
+      type: 'text',
+      x: line.x,
+      y: line.y,
+      text: line.text,
+      size: Math.min(0.5, (line.h * frame.height) / frame.width),
+      color: 'black',
+    }));
+    const items = annotationItems(texts, frame);
+    items.forEach((item, i) => {
+      // 文字の幅を、読み取った行の幅にそろえる（検索で見つけた文字の位置が、絵の文字と合うように）
+      const width = font.widthOfTextAtSize(item.text, item.size);
+      const target = page.ocr.lines[i].w * frame.width;
+      item.squeeze = width > 0 ? (target / width) * 100 : 100;
+      item.invisible = true;
+    });
+    drawItems(pdfPage, items, { font });
+  }
+}
+
 /** すべてのページに、書き込み（ページ番号など）をする */
 async function drawMarks(out, marks, { loadFont, date, numbering }) {
   const font = await loadFont();
@@ -257,6 +305,9 @@ async function drawMarks(out, marks, { loadFont, date, numbering }) {
     drawItems(pdfPage, marksForPage(marks, { ...view, index: offset + i, total, date, measure }), { font });
   });
 }
+
+/** ページごとに、見えない文字に使うフォントの名前（同じページで何度も登録しないため） */
+const fontKeys = new WeakMap();
 
 /**
  * 画面で見たときの向きの座標（ポイント・左下が原点）で表した内容を、ページに描く。
@@ -290,7 +341,22 @@ function drawItems(pdfPage, items, { font, images }) {
     }
     const p = place(item.x, item.y);
     const rotate = degrees(normalizeRotation(p.angle + item.angle));
-    if (item.type === 'text') {
+    if (item.type === 'text' && item.invisible) {
+      // 見えない文字（文字の描き方「描かない」）。pdf-lib の drawText では指定できないので、命令を直接書く
+      if (!fontKeys.has(pdfPage)) fontKeys.set(pdfPage, pdfPage.node.newFontDictionary(font.name, font.ref));
+      const key = fontKeys.get(pdfPage);
+      pdfPage.pushOperators(
+        pushGraphicsState(),
+        beginText(),
+        setFontAndSize(key, item.size),
+        setTextRenderingMode(TextRenderingMode.Invisible),
+        setCharacterSqueeze(item.squeeze ?? 100),
+        rotateAndSkewTextDegreesAndTranslate(normalizeRotation(p.angle + item.angle), 0, 0, p.x, p.y),
+        showText(font.encodeText(item.text)),
+        endText(),
+        popGraphicsState(),
+      );
+    } else if (item.type === 'text') {
       pdfPage.drawText(item.text, { x: p.x, y: p.y, size: item.size, font, color, opacity: item.opacity, rotate });
     } else if (item.type === 'image') {
       pdfPage.drawImage(images.get(item.sourceId), { x: p.x, y: p.y, width: item.width, height: item.height, rotate });

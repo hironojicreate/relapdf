@@ -129,3 +129,31 @@ test('暗号化の情報がそろっているかを見分ける（パスワー�
   assert.equal(await hasValidEncryption(await fixture('sample-3pages.pdf')), false);
   await assert.rejects(inspectPdf(await fixture('locked.pdf')), EncryptedPdfError);
 });
+
+test('文字認識の結果を、見えない文字として重ねる（検索・コピーできる）', async () => {
+  const { setOcr, setPerspective } = await import('../../src/core/page-list.js');
+  const fontkit = (await import('../../vendor/fontkit/fontkit.mjs')).default;
+  const fontBytes = await fixture('../../vendor/fonts/BIZUDGothic-Regular.ttf');
+  const { doc, options } = await setup();
+  const ocr = { lines: [{ text: '請求書 2026年', x: 0.1, y: 0.1, w: 0.5, h: 0.04 }], paper: 'a4' };
+  let withOcr = setOcr(doc, 'p1', ocr);
+  withOcr = setOcr(withOcr, 'j', ocr);
+  assert.equal(withOcr.pages[0].ocr.lines[0].text, '請求書 2026年');
+  // 写真の補正を変えたら、位置が合わなくなるので結果を外す
+  assert.equal(setPerspective(withOcr, 'j', { corners: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }], aspect: 'free' }).pages[3].ocr, undefined);
+  const bytes = await exportPdf(withOcr, { ...options, getFont: async () => ({ bytes: fontBytes, fontkit }) });
+  const pdf = await PDFDocument.load(bytes);
+  // 見えない文字（3 Tr）が書かれている
+  const { inflateSync } = await import('../../vendor/fflate/fflate.mjs');
+  const contents = pdf.getPage(0).node.Contents();
+  const streams = contents.asArray ? contents.asArray().map((ref) => pdf.context.lookup(ref)) : [contents];
+  const text = streams.map((st) => {
+    const raw = st.getContents ? st.getContents() : st.contents;
+    try {
+      return Buffer.from(inflateSync(raw.subarray(2))).toString('latin1');
+    } catch {
+      return Buffer.from(raw).toString('latin1');
+    }
+  }).join('\n');
+  assert.match(text, /3 Tr/);
+});

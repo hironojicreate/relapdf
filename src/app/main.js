@@ -26,6 +26,7 @@ import {
   setFormValues,
   setLayout,
   setMarks,
+  setOcr,
   setPerspective,
   setProperties,
 } from '../core/page-list.js';
@@ -53,6 +54,8 @@ import { createToolsDialog } from './tools-dialog.js';
 import { createMarksDialog } from './marks-dialog.js';
 import { createFormsDialog } from './forms-dialog.js';
 import { createPropertiesDialog } from './properties-dialog.js';
+import { createOcrDialog } from './ocr-dialog.js';
+import { recognizeLines } from '../web/ocr.js';
 import { createPasswordPrompt, createProtectDialog } from './password-dialogs.js';
 import { WrongPasswordError, decryptPdf, encryptPdf } from '../web/qpdf.js';
 import { createLayoutDialog } from './layout-dialog.js';
@@ -630,6 +633,59 @@ const layoutDialog = createLayoutDialog({
   },
 });
 
+// ---- 文字認識（OCR） ----
+
+const OCR_DPI = 300; // 読み取る画像の細かさ（文字の読み取りには300dpiくらいがよい）
+
+/**
+ * 文字を読み取るための、ページの画像を作る。
+ * 注釈・書き込み・トリミング・ユーザーの回転をかけずに、1ページのPDFにしてから画像にする
+ * （位置を、注釈と同じ「ユーザーの回転をかける前のページ」の割合で表すため）。
+ */
+async function renderForOcr(page) {
+  const one = { ...extractPages(doc, [page.id]), marks: null, layout: null };
+  one.pages = one.pages.map(({ crop, annotations, ocr, ...p }) => ({ ...p, rotation: 0 }));
+  const bytes = await exportPdf(one, exportOptions());
+  const id = `ocr-${++markPreviewCount}`;
+  try {
+    return await renderPdfPage(id, async () => bytes, 0, { scale: OCR_DPI / 72, maxSide: 3500, type: 'image/png' });
+  } finally {
+    closePdf(id);
+  }
+}
+
+async function recognizePages(pageIds) {
+  let next = doc;
+  let done = 0;
+  try {
+    for (const [i, id] of pageIds.entries()) {
+      const page = next.pages.find((p) => p.id === id);
+      if (!page) continue;
+      const label = `文字を読み取り中… ${i + 1} / ${pageIds.length}ページ`;
+      showBusy(i === 0 ? `${label}（初めてのときは、部品を読み込みます）` : label);
+      const lines = await recognizeLines(await renderForOcr(page), (progress) => {
+        showBusy(`${label}（${Math.round(progress * 100)}%）`);
+      });
+      next = setOcr(next, id, { lines, paper: page.content.type === 'image' ? els.paper.value : null });
+      done += 1;
+    }
+  } catch (error) {
+    console.error(error);
+    toast(`文字を読み取れませんでした：${error.message}`, 'error');
+    throw error;
+  } finally {
+    hideBusy();
+    if (done > 0) update(next);
+  }
+  toast(`${done}ページの文字を読み取りました（PDFを作成すると、文字を検索・コピーできます）`, 'info', { duration: 5000 });
+}
+
+const ocrDialog = createOcrDialog({
+  getDoc: () => doc,
+  getSelectedIds: () => selectedIds(),
+  recognize: (ids) => serial(() => recognizePages(ids)),
+});
+
 // ---- パスワード ----
 
 const passwordPrompt = createPasswordPrompt();
@@ -1053,6 +1109,7 @@ function renderCard(page, index, count) {
     page.perspective ? '補正済み' : '',
     page.crop ? 'トリミング' : '',
     hasRedactions(page) ? '墨消し' : '',
+    page.ocr ? 'OCR' : '',
     page.annotations?.length ? `注釈${page.annotations.length}` : '',
   ].filter(Boolean);
   if (badges.length) {
@@ -1324,6 +1381,9 @@ function onAction(action) {
       break;
     case 'open-layout':
       layoutDialog.open();
+      break;
+    case 'open-ocr':
+      ocrDialog.open();
       break;
     case 'open-protect':
       protectDialog.open();

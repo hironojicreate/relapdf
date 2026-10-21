@@ -10,6 +10,7 @@ CDNは使わず、ここに置いたファイルだけを読み込みます（�
 | `fontkit/` | [@pdf-lib/fontkit](https://github.com/Hopding/fontkit) | 1.1.1 | MIT（`fontkit/LICENSE`） | `dist/fontkit.umd.min.js` → `fontkit.mjs`（下記の変更あり） |
 | `fonts/` | [BIZ UDゴシック](https://github.com/googlefonts/morisawa-biz-ud-gothic)（Regular） | Google Fonts 版 | SIL OFL 1.1（`fonts/OFL.txt`） | `ofl/bizudgothic/BIZUDGothic-Regular.ttf`（下記の変更あり） |
 | `qpdf/` | [qpdf](https://github.com/qpdf/qpdf) 12.2.0（[@neslinesli93/qpdf-wasm](https://github.com/neslinesli93/qpdf-wasm) 0.3.0 の WebAssembly 版） | 12.2.0 | Apache 2.0（`qpdf/LICENSE`）、包む部分は ISC（`qpdf/LICENSE-wrapper`） | `dist/qpdf.js` → `qpdf.mjs`、`dist/qpdf.wasm` |
+| `tesseract/` | [Tesseract.js](https://github.com/naptha/tesseract.js) 7.0.0、[tesseract.js-core](https://github.com/naptha/tesseract.js-core) 7.0.0、日本語の学習データ（[@tesseract.js-data/jpn](https://github.com/naptha/tessdata) 1.0.0 の 4.0.0_best_int） | 7.0.0 | Apache 2.0（`tesseract/LICENSE`、`tesseract/core/LICENSE`）、学習データは MIT（元は tessdata_best・Apache 2.0） | `dist/tesseract.esm.min.js`、`dist/worker.min.js`、`tesseract-core-lstm.wasm.js`、`tesseract-core-simd-lstm.wasm.js`、`4.0.0_best_int/jpn.traineddata.gz` |
 | `pdfjs/` | [PDF.js](https://github.com/mozilla/pdf.js)（pdfjs-dist） | 6.4.299 | Apache 2.0（`pdfjs/LICENSE`） | `legacy/build/pdf.min.mjs`、`legacy/build/pdf.worker.min.mjs`、`cmaps/`、`standard_fonts/`、`iccs/`、`wasm/` |
 
 ## PDF.js について
@@ -43,3 +44,10 @@ CDNは使わず、ここに置いたファイルだけを読み込みます（�
 - WebAssembly を動かすため、`index.html` の CSP に `'wasm-unsafe-eval'` を足しています（JavaScript の文字列を実行する `eval` は許していません）。
 - この版の qpdf は、エラーの文を受け取れません（ブラウザの console に出るだけ）。成功・失敗だけで判断しています（`src/web/qpdf.js`）。
 - WebAssembly の中には、qpdf が使う zlib（zlib License）と libjpeg-turbo（IJG License・BSD 3条項）も入っています。
+
+## Tesseract.js について（文字認識・OCR）
+
+- 約8MBあるので、**オフライン用の最初のキャッシュには入れていません**（アプリを更新するたびに全員が取り直さなくてすむように）。初めて文字認識を使ったときに、Service Worker が別のキャッシュ（`relapdf-ocr-1`）に入れ、以後はオフラインでも使えます。部品を入れ替えたら、`sw.js` の `OCR_CACHE` の数字を上げてください。
+- WebAssembly の部品は、速い命令（SIMD）が使える端末用（`simd-lstm`）と使えない端末用（`lstm`）の2つを入れ、画面側で選んでいます（`src/web/ocr.js`）。文字の並びを読む新しい方式（LSTM）だけの版です。
+- ソースマップの参照（`//# sourceMappingURL=`）は、ファイルがないため削除しています。
+- 中に含まれる部品のライセンス（buffer・ieee754・regenerator-runtime・zlib.js）は `tesseract/LICENSE-bundled` にあります（MIT・BSD）。

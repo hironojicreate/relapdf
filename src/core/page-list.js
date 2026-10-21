@@ -205,7 +205,7 @@ export function setPerspective(doc, pageId, perspective) {
   const page = findPage(doc, pageId);
   if (page.content.type !== 'image') throw new Error('4点補正は画像のページだけに使えます');
   const value = perspective === null ? null : normalizePerspective(perspective);
-  return mapPages(doc, new Set([pageId]), (p) => ({ ...p, perspective: value }));
+  return mapPages(doc, new Set([pageId]), (p) => withoutOcr({ ...p, perspective: value }));
 }
 
 /**
@@ -232,6 +232,42 @@ export function setCrop(doc, pageIds, crop) {
     if (!value) delete next.crop;
     return next;
   });
+}
+
+/**
+ * 文字認識（OCR）の結果を確かめる。
+ * { lines: [{ text, x, y, w, h }], paper } 位置はユーザーの回転をかける前のページに対する0〜1の割合（注釈と同じ）。
+ * paper は、写真のページを読み取ったときの用紙の設定（用紙が変わると位置が合わなくなるため、書き出すときに比べる）
+ */
+export function normalizeOcr(ocr) {
+  if (!ocr || typeof ocr !== 'object' || !Array.isArray(ocr.lines)) throw new Error('文字認識の結果が不正です');
+  const lines = ocr.lines.map((line) => {
+    const { text, x, y, w, h } = line ?? {};
+    if (typeof text !== 'string' || ![x, y, w, h].every((v) => typeof v === 'number' && Number.isFinite(v) && v >= -0.01 && v <= 1.01)) {
+      throw new Error('文字認識の結果が不正です');
+    }
+    return { text, x, y, w, h };
+  });
+  return { lines, paper: typeof ocr.paper === 'string' ? ocr.paper : null };
+}
+
+/** 文字認識（OCR）の結果を設定する。null で外す */
+export function setOcr(doc, pageId, ocr) {
+  const page = findPage(doc, pageId);
+  const value = ocr === null ? null : normalizeOcr(ocr);
+  return mapPages(doc, new Set([page.id]), (p) => {
+    const next = { ...p, ocr: value };
+    if (!value) delete next.ocr;
+    return next;
+  });
+}
+
+/** 写真の見え方が変わったページの、文字認識の結果を外す（位置が合わなくなるため） */
+function withoutOcr(page) {
+  if (!page.ocr) return page;
+  const next = { ...page };
+  delete next.ocr;
+  return next;
 }
 
 /** 文書のプロパティの項目（PDFの「文書のプロパティ」に入る） */
@@ -292,7 +328,7 @@ export function setFormValues(doc, sourceId, values) {
 export function setFilter(doc, pageIds, filter) {
   if (!FILTERS.includes(filter)) throw new Error(`色補正の種類が不正です: ${filter}`);
   const ids = toIdSet(doc, pageIds);
-  return mapPages(doc, ids, (page) => ({ ...page, filter }));
+  return mapPages(doc, ids, (page) => (page.filter === filter ? page : withoutOcr({ ...page, filter })));
 }
 
 /** どのページからも使われていない元データを取り除く。取り除いたIDも返す（バイナリの削除に使う） */
@@ -389,6 +425,7 @@ export function validateDocument(doc) {
       }
     }
     if (page.crop !== undefined) normalizeCrop(page.crop);
+    if (page.ocr !== undefined) normalizeOcr(page.ocr);
     if (page.annotations !== undefined) {
       for (const a of normalizeAnnotations(page.annotations)) {
         if (a.type === 'image' && doc.sources[a.sourceId]?.kind !== 'image') throw new Error(`注釈の画像が見つかりません: ${a.sourceId}`);

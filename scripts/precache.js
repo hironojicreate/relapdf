@@ -16,7 +16,9 @@ const OUTPUT = 'precache-manifest.js';
 // キャッシュする場所（フォルダは中身をすべて含める）
 const ENTRIES = ['index.html', 'manifest.webmanifest', 'icons', 'src', 'vendor'];
 // キャッシュしないもの（ライセンス文や説明書きはアプリの動作に不要）
-const EXCLUDE = [/(^|\/)(LICENSE[^/]*|README\.md)$/, /\.map$/, /(^|\/)\./];
+// 文字認識（OCR）の部品（約8MB）は、更新のたびに全員が取り直さなくてすむよう、ここには入れない。
+// 初めて使ったときに Service Worker が別のキャッシュ（relapdf-ocr-…）に入れる（sw.js）
+const EXCLUDE = [/(^|\/)(LICENSE[^/]*|README\.md)$/, /\.map$/, /(^|\/)\./, /^vendor\/tesseract\//];
 
 async function walk(relative) {
   const full = path.join(ROOT, relative);

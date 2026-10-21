@@ -10,6 +10,10 @@ const { version, files } = self.RELAPDF_PRECACHE;
 const CACHE_PREFIX = 'relapdf-';
 const CACHE_NAME = `${CACHE_PREFIX}${version}`;
 const SCOPE = new URL('./', self.location).href;
+// 文字認識（OCR）の部品は、初めて使ったときにこのキャッシュに入れる（大きいので、アプリの更新では取り直さない）。
+// 部品を入れ替えたら、名前の数字を上げる
+const OCR_CACHE = `${CACHE_PREFIX}ocr-1`;
+const OCR_PATH = new URL('./vendor/tesseract/', self.location).href;
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -25,7 +29,7 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(
     (async () => {
       for (const name of await caches.keys()) {
-        if (name.startsWith(CACHE_PREFIX) && name !== CACHE_NAME) await caches.delete(name);
+        if (name.startsWith(CACHE_PREFIX) && name !== CACHE_NAME && name !== OCR_CACHE) await caches.delete(name);
       }
       await self.clients.claim();
     })(),
@@ -42,6 +46,20 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
   if (url.origin !== self.location.origin || !url.href.startsWith(SCOPE)) return;
+
+  if (url.href.startsWith(OCR_PATH)) {
+    event.respondWith(
+      (async () => {
+        const cache = await caches.open(OCR_CACHE);
+        const cached = await cache.match(url.href, { ignoreSearch: true });
+        if (cached) return cached;
+        const response = await fetch(request);
+        if (response.ok) await cache.put(url.href, response.clone());
+        return response;
+      })(),
+    );
+    return;
+  }
 
   event.respondWith(
     (async () => {
