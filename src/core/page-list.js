@@ -216,6 +216,29 @@ export function setMarks(doc, marks) {
   return { ...doc, marks: marks === null ? null : normalizeMarks(marks) };
 }
 
+/** 文書のプロパティの項目（PDFの「文書のプロパティ」に入る） */
+export const PROPERTY_KEYS = Object.freeze(['title', 'author', 'subject', 'keywords']);
+
+/** プロパティの形を確かめ、前後の空白を除いた新しい値を返す。空の項目は持たない */
+export function normalizeProperties(properties) {
+  if (!properties || typeof properties !== 'object') throw new Error('プロパティが不正です');
+  const out = {};
+  for (const key of PROPERTY_KEYS) {
+    const value = properties[key];
+    if (value === undefined || value === null) continue;
+    if (typeof value !== 'string' || value.length > 1000) throw new Error(`プロパティの値が不正です: ${key}`);
+    if (value.trim()) out[key] = value.trim();
+  }
+  return out;
+}
+
+/** 文書のプロパティ（タイトル・作成者・件名・キーワード）を設定する。null で外す */
+export function setProperties(doc, properties) {
+  assertDocument(doc);
+  const value = properties === null ? null : normalizeProperties(properties);
+  return { ...doc, properties: value && Object.keys(value).length ? value : null };
+}
+
 /**
  * ページの注釈（文字・図形・署名や印鑑の画像）を置き換える。空の配列で外す。
  * 画像の注釈が使う元データ（asset の画像）は、先に addSource で登録しておく。
@@ -320,6 +343,7 @@ export function validateDocument(doc) {
   assertDocument(doc);
   if (doc.version !== SCHEMA_VERSION) throw new Error(`対応していない形式のバージョンです: ${doc.version}`);
   if (doc.marks != null) normalizeMarks(doc.marks);
+  if (doc.properties != null) normalizeProperties(doc.properties);
   for (const [sourceId, values] of Object.entries(doc.forms ?? {})) {
     if (doc.sources[sourceId]?.kind !== 'pdf') throw new Error(`フォーム入力の元データが見つかりません: ${sourceId}`);
     normalizeFormValues(values);

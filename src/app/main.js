@@ -7,21 +7,25 @@
 import {
   addSource,
   appendSourcePages,
+  createBlankPage,
   createDocument,
   deserializeDocument,
+  extractPages,
+  insertPages,
   movePages,
   movePagesBefore,
+  newId,
+  PAPER_SIZES,
   pruneSources,
   removePages,
   rotatePages,
   serializeDocument,
-  extractPages,
-  setFilter,
-  newId,
   setAnnotations,
+  setFilter,
   setFormValues,
   setMarks,
   setPerspective,
+  setProperties,
 } from '../core/page-list.js';
 import { describeMarks, hasMarks } from '../core/marks.js';
 import { COMPRESS_LEVELS } from '../core/compress.js';
@@ -45,6 +49,7 @@ import { createStepHistory } from './navigation.js';
 import { createToolsDialog } from './tools-dialog.js';
 import { createMarksDialog } from './marks-dialog.js';
 import { createFormsDialog } from './forms-dialog.js';
+import { createPropertiesDialog } from './properties-dialog.js';
 import { createAnnotator } from './annotate-editor.js';
 import { createSignatureDialog } from './signature-dialog.js';
 import { createPreview } from './preview.js';
@@ -508,6 +513,24 @@ const annotator = createAnnotator({
     toast(annotations.length ? `注釈を保存しました（${annotations.length}個）` : '注釈を外しました');
   },
 });
+
+const propertiesDialog = createPropertiesDialog({
+  getDoc: () => doc,
+  getDefaultTitle: () => baseFileName(),
+  onApply: (properties) => {
+    update(setProperties(doc, properties));
+    toast(doc.properties ? 'プロパティを保存しました（PDFを作成するときに書き込みます）' : 'プロパティを外しました');
+  },
+});
+
+/** 白紙のページ（A4）を、選んだページの後ろ（選んでいなければ最後）に入れる */
+function insertBlank() {
+  const ids = selectedIds();
+  const last = ids.length ? doc.pages.findIndex((p) => p.id === ids[ids.length - 1]) : doc.pages.length - 1;
+  const page = createBlankPage(PAPER_SIZES.A4);
+  update(insertPages(doc, [page], last + 1));
+  toast(`白紙を${last + 2}番目に入れました`);
+}
 
 /** 選んでいるページ（なければ1ページ目）の注釈を開く */
 function openAnnotator() {
@@ -1101,6 +1124,12 @@ function onAction(action) {
       break;
     case 'delete-selected':
       deletePages(selectedIds());
+      break;
+    case 'open-properties':
+      propertiesDialog.open();
+      break;
+    case 'insert-blank':
+      insertBlank();
       break;
     case 'open-annotator':
       openAnnotator();

@@ -76,7 +76,12 @@ export async function exportPdf(doc, options) {
   out.setCreator(APP_NAME);
   out.setCreationDate(date);
   out.setModificationDate(date);
-  if (title) out.setTitle(title);
+  // プロパティ（設定されていれば、ファイル名から付けたタイトルより優先する）
+  const props = doc.properties ?? {};
+  if (props.title || title) out.setTitle(props.title || title);
+  if (props.author) out.setAuthor(props.author);
+  if (props.subject) out.setSubject(props.subject);
+  if (props.keywords) out.setKeywords(props.keywords.split(/[,、，]\s*/).filter(Boolean));
 
   // PDFのページは元データごとにまとめてコピーする（フォントなどの共有データを重複させないため）
   const copied = await copyPdfPages(doc, out, getSourceBytes, getFont);

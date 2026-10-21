@@ -106,3 +106,15 @@ test('PDFではないファイルはわかりやすいエラーにする', async
   await assert.rejects(() => inspectPdf(new TextEncoder().encode('hello')), InvalidPdfError);
 });
 
+
+test('文書のプロパティ（タイトル・作成者・件名・キーワード）を書き込む', async () => {
+  const { setProperties } = await import('../../src/core/page-list.js');
+  const { doc, options } = await setup();
+  const withProps = setProperties(doc, { title: '  見積書  ', author: '山田', subject: '', keywords: '見積, 2026、急ぎ' });
+  assert.deepEqual(withProps.properties, { title: '見積書', author: '山田', keywords: '見積, 2026、急ぎ' });
+  const pdf = await PDFDocument.load(await exportPdf(withProps, { ...options, title: 'ファイル名' }), { updateMetadata: false });
+  assert.equal(pdf.getTitle(), '見積書');
+  assert.equal(pdf.getAuthor(), '山田');
+  assert.equal(pdf.getKeywords(), '見積 2026 急ぎ');
+  assert.equal(setProperties(doc, { title: ' ' }).properties, null);
+});

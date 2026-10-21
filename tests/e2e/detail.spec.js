@@ -309,3 +309,26 @@ test('タッチ操作：長押しせずに指を動かしたときは、スク�
   await expect(page.locator('.drop-marker')).toBeHidden();
   expect(await names(page)).toEqual(before);
 });
+
+test('白紙を入れる・プロパティを書き込む', async ({ page }) => {
+  await openFiles(page);
+  await page.evaluate(() => document.querySelector('#page-grid').scrollIntoView());
+  await cards(page).nth(1).locator('.thumb').click();
+  await page.click('[data-action="insert-blank"]');
+  await expect(page.locator('#toast')).toContainText('白紙を3番目に入れました');
+  await expect(cards(page)).toHaveCount(6);
+  await expect(cards(page).nth(2).locator('.blank')).toBeVisible();
+
+  await page.click('[data-action="open-properties"]');
+  const dialog = page.locator('#properties-dialog');
+  await dialog.locator('[data-prop="title"]').fill('会議資料');
+  await dialog.locator('[data-prop="author"]').fill('総務部');
+  await dialog.locator('button[type="submit"]').click();
+  await expect(page.locator('#toast')).toContainText('プロパティを保存しました');
+
+  const file = await download(page, () => page.click('[data-action="export"]:visible'));
+  const pdf = await PDFDocument.load(file.bytes, { updateMetadata: false });
+  expect(pdf.getPageCount()).toBe(6);
+  expect(pdf.getTitle()).toBe('会議資料');
+  expect(pdf.getAuthor()).toBe('総務部');
+});
