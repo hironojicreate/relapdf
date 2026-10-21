@@ -502,8 +502,11 @@ body.camera-open { overflow: hidden; }
   background: var(--accent); color: #fff; font-weight: 700; font-size: 16px; cursor: pointer;
 }
 /* 明るさの調整 */
+.camera-adjusts {
+  position: relative; margin-top: auto; z-index: 1; display: grid; gap: 8px; justify-items: center;
+}
 .camera-adjust {
-  position: relative; margin-top: auto; align-self: center; z-index: 1;
+  position: relative;
   display: flex; align-items: center; gap: 10px; width: min(360px, calc(100% - 48px));
   padding: 8px 14px; border-radius: 999px; background: rgba(0, 0, 0, .5);
 }
@@ -513,7 +516,10 @@ body.camera-open { overflow: hidden; }
   min-width: 52px; min-height: 32px; border: 0; border-radius: 999px; background: rgba(255, 255, 255, .15);
   color: #fff; font-size: 13px; font-weight: 700; cursor: pointer;
 }
-.camera-adjust + .camera-bottom { margin-top: 0; }
+.camera-adjusts + .camera-bottom { margin-top: 0; }
+/* ピンチで拡大できるよう、ブラウザ自体の拡大・スクロールを止める。拡大した映像は画面の外を切り取る */
+.camera { touch-action: none; overflow: hidden; }
+.camera video { transform-origin: center center; }
 
 /* 横向きのときは、ボタンを右側に縦に並べる */
 @media (orientation: landscape) and (max-height: 500px) {
@@ -524,7 +530,8 @@ body.camera-open { overflow: hidden; }
     background: linear-gradient(to left, rgba(0, 0, 0, .6), transparent);
   }
   .camera-last-wrap { justify-self: center; align-self: start; }
-  .camera-adjust { position: absolute; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 12px); transform: translateX(-50%); }
+  .camera-adjusts { position: absolute; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 12px); transform: translateX(-50%); width: min(360px, 60%); }
+  .camera-adjust { width: 100%; }
   .camera-done { justify-self: center; align-self: end; }
 }
 
@@ -658,11 +665,19 @@ body.has-bottom-bar .app-version { bottom: calc(var(--bottom-bar, 0px) + 6px); }
     <p id="camera-error-text"></p>
     <button type="button" class="btn primary" data-camera="os-camera">端末のカメラアプリで撮る</button>
   </div>
+  <div class="camera-adjusts">
+  <div class="camera-adjust">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5M8.5 11h5"/></svg>
+    <input type="range" id="camera-zoom" min="1" max="4" step="0.1" value="1" aria-label="ズーム">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5M8.5 11h5M11 8.5v5"/></svg>
+    <button type="button" class="camera-brightness-value" id="camera-zoom-value" data-camera="zoom-reset" title="ズームを元に戻す">1.0×</button>
+  </div>
   <div class="camera-adjust">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="3.5"/><path d="M12 5v1.5M12 17.5V19M5 12h1.5M17.5 12H19"/></svg>
     <input type="range" id="camera-brightness" min="-1" max="1" step="0.05" value="0" aria-label="明るさ">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/></svg>
     <button type="button" class="camera-brightness-value" id="camera-brightness-value" data-camera="brightness-reset" title="明るさを元に戻す">100%</button>
+  </div>
   </div>
   <div class="camera-bottom">
     <div class="camera-last-wrap">

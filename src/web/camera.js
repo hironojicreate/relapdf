@@ -5,7 +5,6 @@
 
 import { MAX_SOURCE_LONG_SIDE, fitLongSide } from '../core/layout.js';
 import { applyBrightness } from '../core/color.js';
-import { encodeImage } from './image.js';
 
 /** カメラを使えないときのエラー。reason は画面に出す説明 */
 export class CameraError extends Error {
@@ -64,27 +63,28 @@ export function stopCamera(stream, video) {
 /**
  * 今映っている1コマを写真（JPEG）にする。長辺は元データの上限までに縮小する。
  * @param {HTMLVideoElement} video
- * @param {{ brightness?: number }} [options] brightness は明るさの倍率（1 でそのまま）
+ * @param {{ brightness?: number, region?: {sx: number, sy: number, sw: number, sh: number} }} [options]
+ *   brightness は明るさの倍率（1 でそのまま）。region は切り取る範囲（デジタルズームのとき、画面に見えている範囲）
  * @returns {Promise<{blob: Blob, width: number, height: number}>}
  */
-export async function captureFrame(video, { brightness = 1 } = {}) {
+export async function captureFrame(video, { brightness = 1, region } = {}) {
   const width = video.videoWidth;
   const height = video.videoHeight;
   if (!width || !height) throw new Error('カメラの準備ができていません');
-  const size = fitLongSide(width, height, MAX_SOURCE_LONG_SIDE);
-  if (brightness === 1) {
-    const blob = await encodeImage(video, size.width, size.height, { quality: 0.92 });
-    return { blob, width: size.width, height: size.height };
-  }
-  // 明るさを変えるときは、1コマを描いてから色を調整する
+  const r = region ?? { sx: 0, sy: 0, sw: width, sh: height };
+  const size = fitLongSide(r.sw, r.sh, MAX_SOURCE_LONG_SIDE);
   const canvas = document.createElement('canvas');
   canvas.width = size.width;
   canvas.height = size.height;
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  ctx.drawImage(video, 0, 0, size.width, size.height);
-  const image = ctx.getImageData(0, 0, size.width, size.height);
-  applyBrightness(image, brightness);
-  ctx.putImageData(image, 0, 0);
+  const ctx = canvas.getContext('2d', { willReadFrequently: brightness !== 1 });
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(video, r.sx, r.sy, r.sw, r.sh, 0, 0, size.width, size.height);
+  // 明るさを変えるときは、描いた1コマの色を調整する
+  if (brightness !== 1) {
+    const image = ctx.getImageData(0, 0, size.width, size.height);
+    applyBrightness(image, brightness);
+    ctx.putImageData(image, 0, 0);
+  }
   try {
     const blob = await new Promise((resolve, reject) => {
       canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('写真を作れませんでした'))), 'image/jpeg', 0.92);
@@ -94,6 +94,23 @@ export async function captureFrame(video, { brightness = 1 } = {}) {
     canvas.width = 0;
     canvas.height = 0;
   }
+}
+
+/**
+ * カメラ自体がズームできるか。できるときはその範囲を返す（できなければ null）。
+ * Android の Chrome など、対応している機種だけで使える。
+ */
+export function zoomCapability(stream) {
+  const track = stream?.getVideoTracks?.()[0];
+  const zoom = track?.getCapabilities?.().zoom;
+  if (!zoom || !(zoom.max > zoom.min)) return null;
+  return { min: zoom.min, max: zoom.max };
+}
+
+/** カメラ自体のズームを変える */
+export function applyCameraZoom(stream, value) {
+  const track = stream?.getVideoTracks?.()[0];
+  return track.applyConstraints({ advanced: [{ zoom: value }] });
 }
 
 function describeCameraError(error) {

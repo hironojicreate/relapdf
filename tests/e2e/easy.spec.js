@@ -241,3 +241,49 @@ test('カメラの明るさを調整でき、撮った写真にも反映され�
   await expect(page.locator('#camera-brightness-value')).toHaveText('100%');
   expect(await page.locator('#camera-video').evaluate((v) => v.style.filter)).toBe('');
 });
+
+test('カメラのズーム：スライダーとピンチで拡大でき、撮った写真は画面に見えている範囲になる', async ({ page, context }, testInfo) => {
+  await useEasyMode(page);
+  await page.click('#empty [data-action="camera"]');
+  const shutter = page.locator('#camera-shutter');
+  await expect(shutter).toBeEnabled();
+  await expect(page.locator('#camera-zoom-value')).toHaveText('1.0×');
+  const videoWidth = await page.locator('#camera-video').evaluate((v) => v.videoWidth);
+
+  // テスト用のカメラはズームできないので、デジタルズーム（映像を拡大して切り取る）になる
+  await page.locator('#camera-zoom').fill('2');
+  await expect(page.locator('#camera-zoom-value')).toHaveText('2.0×');
+  expect(await page.locator('#camera-video').evaluate((v) => v.style.transform)).toBe('scale(2)');
+  await shutter.click();
+  await expect(page.locator('#camera-count')).toHaveText('1枚');
+  await page.click('[data-camera="zoom-reset"]');
+  await expect(page.locator('#camera-zoom-value')).toHaveText('1.0×');
+  await shutter.click();
+  await expect(page.locator('#camera-count')).toHaveText('2枚');
+
+  // ピンチで拡大（タッチ操作の端末だけ）
+  if (testInfo.project.name !== 'pc') {
+    const cdp = await context.newCDPSession(page);
+    const box = await page.locator('#camera-video').boundingBox();
+    const cx = box.x + box.width / 2;
+    const cy = box.y + box.height / 3;
+    const points = (d) => [
+      { x: cx - d, y: cy, id: 1 },
+      { x: cx + d, y: cy, id: 2 },
+    ];
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: points(30) });
+    for (let d = 40; d <= 90; d += 10) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: points(d) });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await expect(page.locator('#camera-zoom-value')).toHaveText('3.0×');
+  }
+
+  await page.click('[data-camera="done"]');
+  await expect(cards(page)).toHaveCount(2);
+  const widths = await page.evaluate(() => {
+    const doc = window.__relapdf.getDoc();
+    return doc.pages.map((p) => doc.sources[p.content.sourceId].width);
+  });
+  // 2倍で撮った1枚目は、見えている範囲だけなので幅が狭い
+  expect(widths[0]).toBeLessThan(widths[1] * 0.75);
+  expect(widths[1]).toBe(Math.min(videoWidth, 3508));
+});
