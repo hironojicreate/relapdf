@@ -8,6 +8,7 @@
 // 詳しい仕様は docs/page-list.md を参照。
 
 import { normalizeMarks } from './marks.js';
+import { normalizeFormValues } from './forms.js';
 
 export const SCHEMA_VERSION = 1;
 
@@ -68,6 +69,8 @@ export function addSource(doc, source) {
     // PDFはページ数、画像は常に1
     pageCount: source.kind === 'image' ? 1 : source.pageCount,
   };
+  // PDFに入力欄（フォーム）があれば、その数（フォーム入力のボタンを出すかどうかに使う）
+  if (source.kind === 'pdf' && source.formFieldCount > 0) normalized.formFieldCount = source.formFieldCount;
   if (source.kind === 'image') {
     // 画像の幅・高さは、写真の回転情報（EXIF）を反映したあとの値
     normalized.width = source.width;
@@ -210,6 +213,20 @@ export function setMarks(doc, marks) {
   return { ...doc, marks: marks === null ? null : normalizeMarks(marks) };
 }
 
+/**
+ * フォーム入力の内容を設定する（元データのPDFごと）。空のオブジェクトか null で外す。
+ * @param {Record<string, string|boolean> | null} values 入力欄の名前 → 値
+ */
+export function setFormValues(doc, sourceId, values) {
+  assertDocument(doc);
+  const source = doc.sources[sourceId];
+  if (!source || source.kind !== 'pdf') throw new Error(`フォーム入力はPDFだけに使えます: ${sourceId}`);
+  const forms = { ...(doc.forms ?? {}) };
+  if (values === null || Object.keys(values).length === 0) delete forms[sourceId];
+  else forms[sourceId] = normalizeFormValues(values);
+  return { ...doc, forms };
+}
+
 /** 色補正を設定する */
 export function setFilter(doc, pageIds, filter) {
   if (!FILTERS.includes(filter)) throw new Error(`色補正の種類が不正です: ${filter}`);
@@ -229,7 +246,12 @@ export function pruneSources(doc) {
     if (used.has(id)) sources[id] = source;
     else removed.push(id);
   }
-  return { doc: { ...doc, sources }, removedSourceIds: removed };
+  const next = { ...doc, sources };
+  // 使われなくなったPDFのフォーム入力も消す
+  if (doc.forms && removed.some((id) => doc.forms[id])) {
+    next.forms = Object.fromEntries(Object.entries(doc.forms).filter(([id]) => sources[id]));
+  }
+  return { doc: next, removedSourceIds: removed };
 }
 
 /** 選んだページだけを、並びの順番のまま新しいページリストとして取り出す */
@@ -278,6 +300,10 @@ export function validateDocument(doc) {
   assertDocument(doc);
   if (doc.version !== SCHEMA_VERSION) throw new Error(`対応していない形式のバージョンです: ${doc.version}`);
   if (doc.marks != null) normalizeMarks(doc.marks);
+  for (const [sourceId, values] of Object.entries(doc.forms ?? {})) {
+    if (doc.sources[sourceId]?.kind !== 'pdf') throw new Error(`フォーム入力の元データが見つかりません: ${sourceId}`);
+    normalizeFormValues(values);
+  }
   for (const [id, source] of Object.entries(doc.sources)) {
     if (source.id !== id) throw new Error(`元データのIDが一致しません: ${id}`);
     if (!SOURCE_KINDS.includes(source.kind)) throw new Error(`元データの種類が不正です: ${source.kind}`);

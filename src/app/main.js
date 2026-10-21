@@ -17,6 +17,7 @@ import {
   serializeDocument,
   extractPages,
   setFilter,
+  setFormValues,
   setMarks,
   setPerspective,
 } from '../core/page-list.js';
@@ -41,6 +42,7 @@ import { createPerspectiveEditor } from './perspective-editor.js';
 import { createStepHistory } from './navigation.js';
 import { createToolsDialog } from './tools-dialog.js';
 import { createMarksDialog } from './marks-dialog.js';
+import { createFormsDialog } from './forms-dialog.js';
 import { createPreview } from './preview.js';
 import { renderPageImage } from '../web/page-image.js';
 import { APP_VERSION } from './version.js';
@@ -82,6 +84,8 @@ const els = {
   selectAllButton: $('#select-all'),
   mergeHint: $('#merge-hint'),
   marksStatus: $('#marks-status'),
+  formsStatus: $('#forms-status'),
+  openForms: $('#open-forms'),
   doneTitle: $('#done-title'),
   doneMeta: $('#done-meta'),
   busy: $('#busy'),
@@ -252,8 +256,8 @@ function addFiles(fileList) {
 async function addFile(current, file) {
   if (isPdf(file)) {
     const bytes = new Uint8Array(await file.arrayBuffer());
-    const { pageCount } = await inspectPdf(bytes);
-    const source = { kind: 'pdf', name: file.name, mimeType: 'application/pdf', byteLength: file.size, pageCount };
+    const { pageCount, formFieldCount } = await inspectPdf(bytes);
+    const source = { kind: 'pdf', name: file.name, mimeType: 'application/pdf', byteLength: file.size, pageCount, formFieldCount };
     return addSourceWithBlob(current, source, file);
   }
   if (isImage(file)) {
@@ -474,6 +478,23 @@ const marksDialog = createMarksDialog({
   },
 });
 
+// ---- フォーム入力 ----
+
+const formsDialog = createFormsDialog({
+  getDoc: () => doc,
+  getBytes: (sourceId) => store.bytes(sourceId),
+  onApply: (sourceId, values) => {
+    if (!doc.sources[sourceId]) return;
+    update(setFormValues(doc, sourceId, values));
+    const n = Object.keys(values).length;
+    toast(n > 0 ? `フォームの入力を保存しました（${n}か所）。PDFを作成するときに書き込みます` : 'フォームの入力を外しました');
+  },
+  onError: (error) => {
+    console.error(error);
+    toast(`入力欄を読み取れませんでした：${error.message}`, 'error');
+  },
+});
+
 async function createPdf() {
   if (doc.pages.length === 0) return;
   const fileName = sanitizeFileName(els.fileName.value || els.fileName.placeholder);
@@ -632,6 +653,10 @@ function render() {
   const marks = describeMarks(doc.marks);
   els.marksStatus.hidden = marks.length === 0;
   els.marksStatus.textContent = `書き込み：${marks.join('・')}（PDFを作成するときに、すべてのページに書き込みます）`;
+  const filled = Object.values(doc.forms ?? {}).reduce((n, values) => n + Object.keys(values).length, 0);
+  els.formsStatus.hidden = filled === 0;
+  els.formsStatus.textContent = `フォーム入力：${filled}か所（PDFを作成するときに書き込み、入力欄は固定されます）`;
+  els.openForms.hidden = !formsDialog.hasForms();
 
   const cards = doc.pages.map((page, index) => renderCard(page, index, count));
   els.grid.replaceChildren(...cards);
@@ -988,6 +1013,9 @@ function onAction(action) {
       break;
     case 'delete-selected':
       deletePages(selectedIds());
+      break;
+    case 'open-forms':
+      formsDialog.open();
       break;
     case 'open-marks':
       marksDialog.open();

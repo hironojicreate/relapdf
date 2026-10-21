@@ -14,8 +14,8 @@ test('font', async ({ page }) => {
   console.log('TEXT:', text);
   await page.click('[data-mode="detail"]');
   await page.setInputFiles('#input-files', ['/tmp/claude-0/-home-user-relapdf/f9522f65-aed2-5243-89c1-17414ffba8e1/scratchpad/m6/out.pdf']);
-  await expect(page.locator('.page-card .thumb img[src^="blob:"]')).toHaveCount(1);
-  await page.locator('.page-card .thumb').dblclick();
+  await expect(page.locator('.page-card .thumb img[src^="blob:"]')).toHaveCount(2);
+  await page.locator('.page-card .thumb').first().dblclick();
   await page.waitForTimeout(1500);
-  await page.screenshot({ path: '/tmp/claude-0/-home-user-relapdf/f9522f65-aed2-5243-89c1-17414ffba8e1/scratchpad/m6/font.png' });
+  await page.keyboard.press('ArrowRight'); await page.waitForTimeout(1200); await page.screenshot({ path: '/tmp/claude-0/-home-user-relapdf/f9522f65-aed2-5243-89c1-17414ffba8e1/scratchpad/m6/font.png' });
 });

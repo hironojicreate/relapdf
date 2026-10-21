@@ -7,6 +7,7 @@ import { PDFDocument, degrees, rgb } from '../../vendor/pdf-lib/pdf-lib.esm.min.
 import { imagePageLayout } from './layout.js';
 import { hasMarks, marksForPage, normalizeMarks, toPageSpace } from './marks.js';
 import { compressImages } from './compress.js';
+import { fillAndFlatten, readFormFields } from './forms.js';
 import { normalizeRotation } from './page-list.js';
 
 export const APP_NAME = 'RelaPDF';
@@ -34,7 +35,14 @@ export class InvalidPdfError extends Error {
  */
 export async function inspectPdf(bytes) {
   const pdf = await loadPdf(bytes);
-  return { pageCount: pdf.getPageCount() };
+  let formFieldCount = 0;
+  try {
+    formFieldCount = readFormFields(pdf).length;
+  } catch (error) {
+    // 入力欄が壊れていても、ページを使うことはできる
+    console.warn('PDFの入力欄を読み取れませんでした', error);
+  }
+  return { pageCount: pdf.getPageCount(), formFieldCount };
 }
 
 /**
@@ -68,7 +76,7 @@ export async function exportPdf(doc, options) {
   if (title) out.setTitle(title);
 
   // PDFのページは元データごとにまとめてコピーする（フォントなどの共有データを重複させないため）
-  const copied = await copyPdfPages(doc, out, getSourceBytes);
+  const copied = await copyPdfPages(doc, out, getSourceBytes, getFont);
   // この時点で out に入っているのは、読み込んだPDFのページの中身だけ（写真はまだ入れていない）
   if (compress) {
     const result = await compressImages(out, compress.level, { recompressJpeg: compress.recompressJpeg });
@@ -144,7 +152,7 @@ async function drawMarks(out, marks, { getFont, date, numbering }) {
   });
 }
 
-async function copyPdfPages(doc, out, getSourceBytes) {
+async function copyPdfPages(doc, out, getSourceBytes, getFont) {
   const bySource = new Map();
   for (const page of doc.pages) {
     if (page.content.type !== 'pdf') continue;
@@ -156,6 +164,14 @@ async function copyPdfPages(doc, out, getSourceBytes) {
   const copied = new Map();
   for (const [sourceId, pages] of bySource) {
     const src = await loadPdf(await getSourceBytes(sourceId));
+    // フォーム入力があれば、入力欄に値を入れて平坦化してからコピーする（forms.js）
+    const values = doc.forms?.[sourceId];
+    if (values && Object.keys(values).length > 0) {
+      if (!getFont) throw new Error('フォーム入力に使うフォントがありません');
+      const { bytes, fontkit } = await getFont();
+      src.registerFontkit(fontkit);
+      fillAndFlatten(src, values, await src.embedFont(bytes, { subset: true }));
+    }
     const result = await out.copyPages(
       src,
       pages.map((p) => p.content.pageIndex),

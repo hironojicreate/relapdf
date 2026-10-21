@@ -46,8 +46,9 @@ const sizeOf = (page) => {
   return [Math.round(width), Math.round(height)];
 };
 
-test('PDFのページ数を調べられる', async () => {
-  assert.deepEqual(await inspectPdf(await fixture('sample-3pages.pdf')), { pageCount: 3 });
+test('PDFのページ数と、入力欄（フォーム）の数を調べられる', async () => {
+  assert.deepEqual(await inspectPdf(await fixture('sample-3pages.pdf')), { pageCount: 3, formFieldCount: 0 });
+  assert.deepEqual(await inspectPdf(await fixture('form.pdf')), { pageCount: 2, formFieldCount: 5 });
 });
 
 test('PDFと画像を並びの順番で1つのPDFにする', async () => {
