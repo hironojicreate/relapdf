@@ -9,6 +9,7 @@ import { hasMarks, marksForPage, normalizeMarks, toPageSpace } from './marks.js'
 import { compressImages } from './compress.js';
 import { fillAndFlatten, readFormFields } from './forms.js';
 import { annotationItems } from './annotations.js';
+import { cropToPageBox, hasLayout, normalizeLayout, planSheets } from './imposition.js';
 import { normalizeRotation } from './page-list.js';
 
 export const APP_NAME = 'RelaPDF';
@@ -70,18 +71,8 @@ export async function exportPdf(doc, options) {
   const { getSourceBytes, getImage, getFont, getAnnotationImage, markNumbering, compress, paper = 'a4', title, date = new Date() } = options;
   if (doc.pages.length === 0) throw new Error('ページがありません');
 
-  // updateMetadata: false にしないと、保存時に作成者などが pdf-lib の名前で上書きされる
-  const out = await PDFDocument.create({ updateMetadata: false });
-  out.setProducer(APP_NAME);
-  out.setCreator(APP_NAME);
-  out.setCreationDate(date);
-  out.setModificationDate(date);
-  // プロパティ（設定されていれば、ファイル名から付けたタイトルより優先する）
-  const props = doc.properties ?? {};
-  if (props.title || title) out.setTitle(props.title || title);
-  if (props.author) out.setAuthor(props.author);
-  if (props.subject) out.setSubject(props.subject);
-  if (props.keywords) out.setKeywords(props.keywords.split(/[,、，]\s*/).filter(Boolean));
+  // 書き出しの順番：ページを作る → 注釈 → トリミング → 用紙サイズの変換・割付 → 書き込み（ページ番号など）
+  const out = await createOutput(doc, { title, date });
 
   // PDFのページは元データごとにまとめてコピーする（フォントなどの共有データを重複させないため）
   const copied = await copyPdfPages(doc, out, getSourceBytes, getFont);
@@ -91,7 +82,7 @@ export async function exportPdf(doc, options) {
     compress.onResult?.(result);
   }
 
-  const annotated = []; // { pdfPage, page, baseRotation }
+  const built = []; // { pdfPage, page, baseRotation }
   for (const page of doc.pages) {
     const { content } = page;
     let pdfPage;
@@ -115,25 +106,99 @@ export async function exportPdf(doc, options) {
 
     // PDFにもともと付いている回転に、ユーザーの回転を足す
     pdfPage.setRotation(degrees(normalizeRotation(baseRotation + page.rotation)));
-    if (page.annotations?.length) annotated.push({ pdfPage, page, baseRotation: normalizeRotation(baseRotation) });
+    built.push({ pdfPage, page, baseRotation: normalizeRotation(baseRotation) });
   }
 
-  // 日本語フォントは、使うときに1回だけ埋め込む（使う文字だけ。全部入れると数MBになるため）
-  let fontPromise = null;
-  const loadFont = () => {
-    fontPromise ??= (async () => {
-      if (!getFont) throw new Error('文字の書き込みに使うフォントがありません');
-      const { bytes, fontkit } = await getFont();
-      out.registerFontkit(fontkit);
-      return out.embedFont(bytes, { subset: true });
-    })();
-    return fontPromise;
+  // 日本語フォントは、PDFごとに、使うときに1回だけ埋め込む（使う文字だけ。全部入れると数MBになるため）
+  const fonts = new Map();
+  const fontFor = (pdf) => {
+    if (!fonts.has(pdf)) {
+      fonts.set(
+        pdf,
+        (async () => {
+          if (!getFont) throw new Error('文字の書き込みに使うフォントがありません');
+          const { bytes, fontkit } = await getFont();
+          pdf.registerFontkit(fontkit);
+          return pdf.embedFont(bytes, { subset: true });
+        })(),
+      );
+    }
+    return fonts.get(pdf);
   };
 
-  if (annotated.length > 0) await drawAnnotations(out, annotated, { loadFont, getAnnotationImage });
-  if (hasMarks(doc.marks)) await drawMarks(out, normalizeMarks(doc.marks), { loadFont, date, numbering: markNumbering });
+  const annotated = built.filter(({ page }) => page.annotations?.length);
+  if (annotated.length > 0) await drawAnnotations(out, annotated, { loadFont: () => fontFor(out), getAnnotationImage });
 
-  return out.save();
+  // トリミング：ページの見せる範囲（CropBox）を狭める
+  for (const { pdfPage, page, baseRotation } of built) {
+    if (!page.crop) continue;
+    const box = cropToPageBox(page.crop, pdfPage.getCropBox(), baseRotation);
+    pdfPage.setCropBox(box.x, box.y, box.width, box.height);
+  }
+
+  // 用紙サイズの変換・割付：ページを新しい用紙に並べ直す
+  const result = hasLayout(doc.layout) ? await impose(out, normalizeLayout(doc.layout), doc, { title, date }) : out;
+
+  if (hasMarks(doc.marks)) {
+    await drawMarks(result, normalizeMarks(doc.marks), { loadFont: () => fontFor(result), date, numbering: markNumbering });
+  }
+  return result.save();
+}
+
+/** 書き出すPDFを作り、作成日やプロパティを入れる */
+async function createOutput(doc, { title, date }) {
+  // updateMetadata: false にしないと、保存時に作成者などが pdf-lib の名前で上書きされる
+  const out = await PDFDocument.create({ updateMetadata: false });
+  out.setProducer(APP_NAME);
+  out.setCreator(APP_NAME);
+  out.setCreationDate(date);
+  out.setModificationDate(date);
+  // プロパティ（設定されていれば、ファイル名から付けたタイトルより優先する）
+  const props = doc.properties ?? {};
+  if (props.title || title) out.setTitle(props.title || title);
+  if (props.author) out.setAuthor(props.author);
+  if (props.subject) out.setSubject(props.subject);
+  if (props.keywords) out.setKeywords(props.keywords.split(/[,、，]\s*/).filter(Boolean));
+  return out;
+}
+
+/**
+ * ページを、新しい用紙に並べ直したPDFを作る（用紙サイズの変換・割付。imposition.js）。
+ * 元のページは、画面で見たときの向き（回転をかけた向き）で置く。
+ */
+async function impose(out, layout, doc, meta) {
+  // 画像やフォントは、保存するときに初めて書き込まれる。ページを写す前に書き込んでおかないと、写したページから抜け落ちる
+  await out.flush();
+  const sheetsPdf = await createOutput(doc, meta);
+  const pages = out.getPages();
+  const views = pages.map((p) => {
+    const rotation = normalizeRotation(p.getRotation().angle);
+    const box = p.getCropBox();
+    const sideways = rotation === 90 || rotation === 270;
+    return { width: sideways ? box.height : box.width, height: sideways ? box.width : box.height, rotation, box };
+  });
+  const embedded = await sheetsPdf.embedPages(
+    pages,
+    views.map(({ box }) => ({ left: box.x, bottom: box.y, right: box.x + box.width, top: box.y + box.height })),
+  );
+  for (const sheet of planSheets(views, layout)) {
+    const page = sheetsPdf.addPage([sheet.width, sheet.height]);
+    for (const cell of sheet.cells) {
+      const { box, rotation } = views[cell.index];
+      const w = box.width * cell.scale; // 回転前の大きさ
+      const h = box.height * cell.scale;
+      // 右に回して置くと、左下の角がずれるので、その分だけ動かす
+      let { x, y } = cell;
+      if (rotation === 90) y += w;
+      else if (rotation === 180) (x += w), (y += h);
+      else if (rotation === 270) x += h;
+      page.drawPage(embedded[cell.index], { x, y, xScale: cell.scale, yScale: cell.scale, rotate: degrees(-rotation) });
+      if (layout.border) {
+        page.drawRectangle({ x: cell.x, y: cell.y, width: cell.width, height: cell.height, borderColor: rgb(0.6, 0.6, 0.6), borderWidth: 0.5 });
+      }
+    }
+  }
+  return sheetsPdf;
 }
 
 /** 注釈（文字・図形・署名や印鑑の画像）を描く */

@@ -21,8 +21,10 @@ import {
   rotatePages,
   serializeDocument,
   setAnnotations,
+  setCrop,
   setFilter,
   setFormValues,
+  setLayout,
   setMarks,
   setPerspective,
   setProperties,
@@ -50,6 +52,9 @@ import { createToolsDialog } from './tools-dialog.js';
 import { createMarksDialog } from './marks-dialog.js';
 import { createFormsDialog } from './forms-dialog.js';
 import { createPropertiesDialog } from './properties-dialog.js';
+import { createLayoutDialog } from './layout-dialog.js';
+import { createCropEditor } from './crop-editor.js';
+import { cropFromDisplay, describeLayout } from '../core/imposition.js';
 import { createAnnotator } from './annotate-editor.js';
 import { createSignatureDialog } from './signature-dialog.js';
 import { createPreview } from './preview.js';
@@ -94,6 +99,7 @@ const els = {
   mergeHint: $('#merge-hint'),
   marksStatus: $('#marks-status'),
   formsStatus: $('#forms-status'),
+  layoutStatus: $('#layout-status'),
   openForms: $('#open-forms'),
   doneTitle: $('#done-title'),
   doneMeta: $('#done-meta'),
@@ -514,6 +520,49 @@ const annotator = createAnnotator({
   },
 });
 
+// ---- トリミング ----
+
+const cropper = createCropEditor({
+  renderPage: (page) => renderPageImage(page, store, { maxSide: 1600, format: 'jpeg' }),
+  onApply: (rect, applyToAll) => {
+    const targets = (applyToAll ? selectedIds() : [cropTarget]).map((id) => doc.pages.find((p) => p.id === id)).filter(Boolean);
+    if (targets.length === 0) return;
+    let next = doc;
+    // 範囲は画面の向きで決めたので、ページごとの回転に合わせて回転前の向きに戻す
+    for (const page of targets) next = setCrop(next, [page.id], rect ? cropFromDisplay(rect, page.rotation) : null);
+    update(next);
+    toast(rect ? `${targets.length}ページをトリミングしました` : `${targets.length}ページのトリミングを外しました`);
+  },
+});
+let cropTarget = null;
+
+function openCropper() {
+  const ids = selectedIds();
+  cropTarget = ids[0];
+  const page = doc.pages.find((p) => p.id === cropTarget);
+  if (page) cropper.open(page, ids.length);
+}
+
+const layoutDialog = createLayoutDialog({
+  getDoc: () => doc,
+  onApply: (layout) => {
+    update(setLayout(doc, layout));
+    toast(layout ? `用紙・割付を設定しました（${describeLayout(layout)}）` : '用紙・割付を元に戻しました');
+  },
+  // 見本：最初の1枚分（割付の数だけ）のページをPDFにして、1枚目を画像にする
+  renderPreview: async (layout) => {
+    const ids = doc.pages.slice(0, layout.nup).map((p) => p.id);
+    const part = { ...extractPages(doc, ids), layout };
+    const bytes = await exportPdf(part, { ...exportOptions(), markNumbering: { offset: 0, total: doc.pages.length } });
+    const id = `layout-preview-${++markPreviewCount}`;
+    try {
+      return URL.createObjectURL(await renderPdfPage(id, async () => bytes, 0, { maxSide: 900 }));
+    } finally {
+      closePdf(id);
+    }
+  },
+});
+
 const propertiesDialog = createPropertiesDialog({
   getDoc: () => doc,
   getDefaultTitle: () => baseFileName(),
@@ -562,7 +611,8 @@ const marksDialog = createMarksDialog({
  */
 async function renderAsExported(page, maxSide, marks = doc.marks) {
   const index = doc.pages.indexOf(page);
-  const one = { ...extractPages(doc, [page.id]), marks };
+  // 1ページだけの見本なので、用紙・割付はかけない
+  const one = { ...extractPages(doc, [page.id]), marks, layout: null };
   const bytes = await exportPdf(one, { ...exportOptions(), markNumbering: { offset: index, total: doc.pages.length } });
   const id = `exact-preview-${++markPreviewCount}`;
   try {
@@ -747,6 +797,9 @@ function render() {
   const marks = describeMarks(doc.marks);
   els.marksStatus.hidden = marks.length === 0;
   els.marksStatus.textContent = `書き込み：${marks.join('・')}（PDFを作成するときに、すべてのページに書き込みます）`;
+  const layout = describeLayout(doc.layout);
+  els.layoutStatus.hidden = !layout;
+  els.layoutStatus.textContent = `用紙・割付：${layout}（PDFを作成するときに並べ直します）`;
   const filled = Object.values(doc.forms ?? {}).reduce((n, values) => n + Object.keys(values).length, 0);
   els.formsStatus.hidden = filled === 0;
   els.formsStatus.textContent = `フォーム入力：${filled}か所（PDFを作成するときに書き込み、入力欄は固定されます）`;
@@ -851,6 +904,12 @@ function renderCard(page, index, count) {
     img.alt = `${index + 1}ページ目`;
     img.draggable = false;
     img.style.transform = `rotate(${page.rotation}deg)`;
+    // トリミングしたページは、残す範囲の外を隠す（絵は回転前の向きなので、回転前の範囲のまま使える）
+    if (page.crop) {
+      const { x, y, w, h } = page.crop;
+      const pct = (v) => `${(v * 100).toFixed(2)}%`;
+      img.style.clipPath = `inset(${pct(y)} ${pct(1 - x - w)} ${pct(1 - y - h)} ${pct(x)})`;
+    }
     img.hidden = true;
     const spinner = document.createElement('div');
     spinner.className = 'spinner';
@@ -874,7 +933,11 @@ function renderCard(page, index, count) {
   }
 
   // 印：4点補正をしたページ、注釈のあるページ
-  const badges = [page.perspective ? '補正済み' : '', page.annotations?.length ? `注釈${page.annotations.length}` : ''].filter(Boolean);
+  const badges = [
+    page.perspective ? '補正済み' : '',
+    page.crop ? 'トリミング' : '',
+    page.annotations?.length ? `注釈${page.annotations.length}` : '',
+  ].filter(Boolean);
   if (badges.length) {
     const badge = document.createElement('span');
     badge.className = 'badge';
@@ -1054,6 +1117,10 @@ function closeOverlay() {
     annotator.close();
     return true;
   }
+  if (cropper.isOpen()) {
+    cropper.close();
+    return true;
+  }
   if (camera.isOpen()) {
     camera.finish();
     return true;
@@ -1124,6 +1191,12 @@ function onAction(action) {
       break;
     case 'delete-selected':
       deletePages(selectedIds());
+      break;
+    case 'open-cropper':
+      openCropper();
+      break;
+    case 'open-layout':
+      layoutDialog.open();
       break;
     case 'open-properties':
       propertiesDialog.open();
@@ -1240,7 +1313,7 @@ els.grid.addEventListener('click', (event) => {
 });
 // 詳細モード：ページのない所からマウスでドラッグすると、青い四角に入ったページをまとめて選ぶ
 enableMarqueeSelect(document.body, {
-  enabled: () => mode === 'detail' && doc.pages.length > 0 && !els.workspace.hidden && !editor.isOpen() && !camera.isOpen() && !annotator.isOpen(),
+  enabled: () => mode === 'detail' && doc.pages.length > 0 && !els.workspace.hidden && !editor.isOpen() && !camera.isOpen() && !annotator.isOpen() && !cropper.isOpen(),
   cards: () => [...els.grid.querySelectorAll('.page-card')],
   onSelect: (ids, { add }) => {
     selected = new Set(add ? [...selected, ...ids] : ids);
@@ -1262,7 +1335,7 @@ els.workspace.addEventListener('click', (event) => {
 
 // 詳細モードのキーボード操作：Ctrl/⌘+A すべて選択、Delete 削除、Esc 選択を外す、Ctrl/⌘+Z 元に戻す
 document.addEventListener('keydown', (event) => {
-  if (mode !== 'detail' || document.querySelector('dialog[open]') || camera.isOpen() || editor.isOpen() || annotator.isOpen()) return;
+  if (mode !== 'detail' || document.querySelector('dialog[open]') || camera.isOpen() || editor.isOpen() || annotator.isOpen() || cropper.isOpen()) return;
   if (event.target.closest?.('input, select, textarea')) return;
   const mod = event.ctrlKey || event.metaKey;
   if (mod && event.key.toLowerCase() === 'a' && doc.pages.length > 0) {
@@ -1336,6 +1409,7 @@ function canReloadNow() {
     !camera.isOpen() &&
     !editor.isOpen() &&
     !annotator.isOpen() &&
+    !cropper.isOpen() &&
     !document.querySelector('dialog[open]') &&
     els.busy.hidden
   );

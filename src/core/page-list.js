@@ -10,6 +10,7 @@
 import { normalizeMarks } from './marks.js';
 import { normalizeFormValues } from './forms.js';
 import { annotationSourceIds, normalizeAnnotations } from './annotations.js';
+import { normalizeCrop, normalizeLayout } from './imposition.js';
 
 export const SCHEMA_VERSION = 1;
 
@@ -216,6 +217,23 @@ export function setMarks(doc, marks) {
   return { ...doc, marks: marks === null ? null : normalizeMarks(marks) };
 }
 
+/** 用紙サイズの変換・割付を設定する（imposition.js）。null で外す */
+export function setLayout(doc, layout) {
+  assertDocument(doc);
+  return { ...doc, layout: layout === null ? null : normalizeLayout(layout) };
+}
+
+/** トリミングの範囲を設定する（回転前のページに対する0〜1の割合、左上が原点）。null で外す */
+export function setCrop(doc, pageIds, crop) {
+  const ids = toIdSet(doc, pageIds);
+  const value = crop === null ? null : normalizeCrop(crop);
+  return mapPages(doc, ids, (page) => {
+    const next = { ...page, crop: value };
+    if (!value) delete next.crop;
+    return next;
+  });
+}
+
 /** 文書のプロパティの項目（PDFの「文書のプロパティ」に入る） */
 export const PROPERTY_KEYS = Object.freeze(['title', 'author', 'subject', 'keywords']);
 
@@ -344,6 +362,7 @@ export function validateDocument(doc) {
   if (doc.version !== SCHEMA_VERSION) throw new Error(`対応していない形式のバージョンです: ${doc.version}`);
   if (doc.marks != null) normalizeMarks(doc.marks);
   if (doc.properties != null) normalizeProperties(doc.properties);
+  if (doc.layout != null) normalizeLayout(doc.layout);
   for (const [sourceId, values] of Object.entries(doc.forms ?? {})) {
     if (doc.sources[sourceId]?.kind !== 'pdf') throw new Error(`フォーム入力の元データが見つかりません: ${sourceId}`);
     normalizeFormValues(values);
@@ -369,6 +388,7 @@ export function validateDocument(doc) {
         throw new Error(`ページ番号が範囲外です: ${page.id}`);
       }
     }
+    if (page.crop !== undefined) normalizeCrop(page.crop);
     if (page.annotations !== undefined) {
       for (const a of normalizeAnnotations(page.annotations)) {
         if (a.type === 'image' && doc.sources[a.sourceId]?.kind !== 'image') throw new Error(`注釈の画像が見つかりません: ${a.sourceId}`);
