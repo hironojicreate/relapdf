@@ -727,7 +727,9 @@ function render() {
   const filled = Object.values(doc.forms ?? {}).reduce((n, values) => n + Object.keys(values).length, 0);
   els.formsStatus.hidden = filled === 0;
   els.formsStatus.textContent = `フォーム入力：${filled}か所（PDFを作成するときに書き込み、入力欄は固定されます）`;
-  els.openForms.hidden = !formsDialog.hasForms();
+  // 隠さずに押せなくする（ボタンの位置を変えないため）
+  els.openForms.disabled = !formsDialog.hasForms();
+  els.openForms.title = els.openForms.disabled ? '入力欄（フォーム）のあるPDFを読み込むと使えます' : 'PDFの入力欄に文字を入れる';
 
   const cards = doc.pages.map((page, index) => renderCard(page, index, count));
   els.grid.replaceChildren(...cards);

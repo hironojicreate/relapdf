@@ -24,7 +24,7 @@ test('入力欄のあるPDFだけ「フォーム入力」が出て、日本語�
   await page.click('[data-mode="detail"]');
   await page.setInputFiles('#input-files', [fixture('sample-3pages.pdf')]);
   await expect(page.locator('.page-card .thumb img[src^="blob:"]')).toHaveCount(3);
-  await expect(page.locator('#open-forms')).toBeHidden();
+  await expect(page.locator('#open-forms')).toBeDisabled(); // 隠さずに、押せなくするだけ（ボタンの位置を変えない）
 
   await page.setInputFiles('#input-files', [fixture('form.pdf')]);
   await expect(page.locator('.page-card .thumb img[src^="blob:"]')).toHaveCount(5);

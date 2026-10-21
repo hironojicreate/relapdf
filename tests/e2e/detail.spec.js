@@ -76,6 +76,24 @@ test('クリックするたびに選ぶ・外すが切り替わる。Shift で�
   expect(await selectedCount(page)).toBe(2);
 });
 
+test('ページを選んでも選ばなくても、ボタンの位置は変わらない', async ({ page }) => {
+  await openFiles(page);
+  const positions = () =>
+    page.evaluate(() => {
+      // 画面のスクロールに左右されないよう、道具の欄からの位置で比べる
+      const bar = document.querySelector('.selection-bar').getBoundingClientRect();
+      return [...document.querySelectorAll('.selection-bar button')].map((b) => {
+        const r = b.getBoundingClientRect();
+        return `${b.dataset.action}:${Math.round(r.left - bar.left)},${Math.round(r.top - bar.top)},${Math.round(r.width)}`;
+      });
+    });
+  const before = await positions();
+  await cards(page).nth(0).locator('.thumb').click();
+  await expect(page.locator('#selection-count')).toHaveText('1 / 5 ページを選択中');
+  expect(await positions()).toEqual(before);
+  await expect(page.locator('[data-action="rotate-selected"]')).toBeEnabled();
+});
+
 test('ページのない所からドラッグすると、青い四角で囲んだページをまとめて選ぶ', async ({ page }) => {
   await openFiles(page);
   await page.setViewportSize({ width: 1280, height: 900 });
