@@ -249,7 +249,7 @@ test('タッチ操作：ページを長押ししてから、上下左右どこ�
     cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y }] });
 
   // 2行目の左（3枚目）を長押しして、1行目の左（1枚目の前）へ、上に動かす
-  await page.evaluate(() => scrollTo(0, 260));
+  await page.evaluate(() => document.querySelector('#page-grid').scrollIntoView());
   const a = await cards(page).nth(2).locator('.thumb').boundingBox();
   const b = await cards(page).nth(0).locator('.thumb').boundingBox();
   const sx = a.x + a.width / 2;

@@ -7,7 +7,7 @@
 
 単一HTMLのPWAとして作り、オフラインでも動きます。
 
-> 開発中です（現在 M5：四隅の自動検出・書類モード まで）。進み具合は [docs/handover.md](docs/handover.md) を見てください。
+> 開発中です（現在 M6：書き込み（ページ番号・透かしなど）まで）。進み具合は [docs/handover.md](docs/handover.md) を見てください。
 
 ## ドキュメント
 

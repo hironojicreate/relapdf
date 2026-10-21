@@ -3,8 +3,9 @@
 // pdf-lib を使う。ブラウザでもNode.jsでも同じファイルを読み込めるよう、vendor/ の同梱版を相対パスで読む。
 // 画像の加工（縮小・4点補正・色補正）はブラウザ側で行い、出来上がった画像だけを受け取る。
 
-import { PDFDocument, degrees } from '../../vendor/pdf-lib/pdf-lib.esm.min.js';
+import { PDFDocument, degrees, rgb } from '../../vendor/pdf-lib/pdf-lib.esm.min.js';
 import { imagePageLayout } from './layout.js';
+import { hasMarks, marksForPage, normalizeMarks, toPageSpace } from './marks.js';
 import { normalizeRotation } from './page-list.js';
 
 export const APP_NAME = 'RelaPDF';
@@ -45,10 +46,14 @@ export async function inspectPdf(bytes) {
  * @param {'a4'|'image'} [options.paper] 写真を置く用紙
  * @param {string} [options.title] PDFのタイトル
  * @param {Date} [options.date] 作成日時
+ * @param {() => Promise<{bytes: Uint8Array, fontkit: object}>} [options.getFont]
+ *   書き込み（doc.marks）に使う日本語フォントと fontkit を返す。書き込みがあるときだけ呼ぶ
+ * @param {{ offset: number, total: number }} [options.markNumbering]
+ *   書き込みのページ番号の数え方を変える（見本として一部のページだけ書き出すとき。offset は最初のページが元の何ページ目か）
  * @returns {Promise<Uint8Array>}
  */
 export async function exportPdf(doc, options) {
-  const { getSourceBytes, getImage, paper = 'a4', title, date = new Date() } = options;
+  const { getSourceBytes, getImage, getFont, markNumbering, paper = 'a4', title, date = new Date() } = options;
   if (doc.pages.length === 0) throw new Error('ページがありません');
 
   // updateMetadata: false にしないと、保存時に作成者などが pdf-lib の名前で上書きされる
@@ -87,7 +92,48 @@ export async function exportPdf(doc, options) {
     pdfPage.setRotation(degrees(normalizeRotation(baseRotation + page.rotation)));
   }
 
+  if (hasMarks(doc.marks)) await drawMarks(out, normalizeMarks(doc.marks), { getFont, date, numbering: markNumbering });
+
   return out.save();
+}
+
+/** すべてのページに、書き込み（ページ番号など）をする */
+async function drawMarks(out, marks, { getFont, date, numbering }) {
+  if (!getFont) throw new Error('書き込みに使うフォントがありません');
+  const { bytes, fontkit } = await getFont();
+  out.registerFontkit(fontkit);
+  // 使う文字だけを埋め込む（日本語フォントは全部入れると数MBになるため）
+  const font = await out.embedFont(bytes, { subset: true });
+  const measure = (text, size) => font.widthOfTextAtSize(text, size);
+  const pages = out.getPages();
+  const offset = numbering?.offset ?? 0;
+  const total = numbering?.total ?? pages.length;
+  pages.forEach((pdfPage, i) => {
+    const index = offset + i;
+    const rotation = normalizeRotation(pdfPage.getRotation().angle);
+    const box = pdfPage.getCropBox();
+    const sideways = rotation === 90 || rotation === 270;
+    const view = { width: sideways ? box.height : box.width, height: sideways ? box.width : box.height };
+    for (const item of marksForPage(marks, { ...view, index, total, date, measure })) {
+      const p = toPageSpace(rotation, box, item.x, item.y);
+      const rotate = degrees(normalizeRotation(p.angle + item.angle));
+      const color = rgb(...item.color);
+      if (item.type === 'text') {
+        pdfPage.drawText(item.text, { x: p.x, y: p.y, size: item.size, font, color, opacity: item.opacity, rotate });
+      } else {
+        pdfPage.drawRectangle({
+          x: p.x,
+          y: p.y,
+          width: item.width,
+          height: item.height,
+          borderColor: color,
+          borderWidth: item.borderWidth,
+          borderOpacity: item.opacity,
+          rotate,
+        });
+      }
+    }
+  });
 }
 
 async function copyPdfPages(doc, out, getSourceBytes) {

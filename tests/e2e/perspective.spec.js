@@ -150,6 +150,8 @@ test('PC：ページの絵をドラッグしたときは補正画面を開かな
   await page.click('[data-mode="detail"]');
   await page.setInputFiles('#input-files', [fixture('photo-landscape.jpg'), fixture('photo-landscape.png')]);
   await expect(loadedThumbs(page)).toHaveCount(2);
+  // 道具のボタンが折り返して並ぶ狭い画面でも、ページが見える位置にする
+  await page.evaluate(() => document.querySelector('#page-grid').scrollIntoView());
   const from = await cards(page).nth(0).locator('.thumb').boundingBox();
   const to = await cards(page).nth(1).locator('.thumb').boundingBox();
   await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);

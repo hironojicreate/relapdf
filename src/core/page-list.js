@@ -7,6 +7,8 @@
 //
 // 詳しい仕様は docs/page-list.md を参照。
 
+import { normalizeMarks } from './marks.js';
+
 export const SCHEMA_VERSION = 1;
 
 /** ユーザーが指定できる回転角度 */
@@ -199,6 +201,15 @@ export function setPerspective(doc, pageId, perspective) {
   return mapPages(doc, new Set([pageId]), (p) => ({ ...p, perspective: value }));
 }
 
+/**
+ * 書き込み（ページ番号・ヘッダー/フッター・透かし・スタンプ）を設定する。null で外す。
+ * 書き込みはPDFを書き出すときに、すべてのページにかける（marks.js）。
+ */
+export function setMarks(doc, marks) {
+  assertDocument(doc);
+  return { ...doc, marks: marks === null ? null : normalizeMarks(marks) };
+}
+
 /** 色補正を設定する */
 export function setFilter(doc, pageIds, filter) {
   if (!FILTERS.includes(filter)) throw new Error(`色補正の種類が不正です: ${filter}`);
@@ -266,6 +277,7 @@ export function deserializeDocument(text) {
 export function validateDocument(doc) {
   assertDocument(doc);
   if (doc.version !== SCHEMA_VERSION) throw new Error(`対応していない形式のバージョンです: ${doc.version}`);
+  if (doc.marks != null) normalizeMarks(doc.marks);
   for (const [id, source] of Object.entries(doc.sources)) {
     if (source.id !== id) throw new Error(`元データのIDが一致しません: ${id}`);
     if (!SOURCE_KINDS.includes(source.kind)) throw new Error(`元データの種類が不正です: ${source.kind}`);

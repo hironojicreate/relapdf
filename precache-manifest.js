@@ -1,6 +1,6 @@
 // このファイルは scripts/precache.js が自動で作ります。手で編集しないでください。
 self.RELAPDF_PRECACHE = {
-  "version": "500533dd5213",
+  "version": "20d10fb5aa1b",
   "files": [
     "./",
     "./icons/apple-touch-icon.png",
@@ -14,6 +14,7 @@ self.RELAPDF_PRECACHE = {
     "./src/app/camera-view.js",
     "./src/app/drag.js",
     "./src/app/main.js",
+    "./src/app/marks-dialog.js",
     "./src/app/marquee.js",
     "./src/app/navigation.js",
     "./src/app/perspective-editor.js",
@@ -24,6 +25,7 @@ self.RELAPDF_PRECACHE = {
     "./src/core/detect.js",
     "./src/core/filename.js",
     "./src/core/layout.js",
+    "./src/core/marks.js",
     "./src/core/page-list.js",
     "./src/core/page-range.js",
     "./src/core/pdf-export.js",
@@ -32,6 +34,7 @@ self.RELAPDF_PRECACHE = {
     "./src/web/canvas-util.js",
     "./src/web/detect-image.js",
     "./src/web/document-mode.js",
+    "./src/web/fonts.js",
     "./src/web/image.js",
     "./src/web/install.js",
     "./src/web/mode.js",
@@ -43,6 +46,9 @@ self.RELAPDF_PRECACHE = {
     "./src/web/updater.js",
     "./src/web/zoom.js",
     "./vendor/fflate/fflate.mjs",
+    "./vendor/fontkit/fontkit.mjs",
+    "./vendor/fonts/BIZUDGothic-Regular.ttf",
+    "./vendor/fonts/OFL.txt",
     "./vendor/pdf-lib/pdf-lib.esm.min.js",
     "./vendor/pdfjs/cmaps/78-EUC-H.bcmap",
     "./vendor/pdfjs/cmaps/78-EUC-V.bcmap",

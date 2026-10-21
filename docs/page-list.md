@@ -10,7 +10,8 @@ RelaPDFの中心となるデータ構造です。実装は `src/core/page-list.j
   sources: {               // 元データ（読み込んだPDF・画像）の情報。キーは sourceId
     "src_...": Source,
   },
-  pages: [Page, ...]       // ページの並び。この順番がそのまま出力の順番になる
+  pages: [Page, ...],      // ページの並び。この順番がそのまま出力の順番になる
+  marks: Marks | null      // 書き込み（ページ番号など）。なくてもよい（M6で追加。古いデータにはない）
 }
 ```
 
@@ -62,6 +63,25 @@ RelaPDFの中心となるデータ構造です。実装は `src/core/page-list.j
 
 座標の基準は「写真の回転情報を反映したあと、ユーザーの回転をかける前」の元画像です。書類の端が写真からはみ出していても補正できるよう、写真の外にも幅・高さの25%まで置けます（`PERSPECTIVE_MARGIN`）。はみ出した部分は白で書き出します。座標を割合で持つのは、縮小した画像でも元の画像でも同じ値を使えるようにするためです。
 
+## Marks（書き込み）
+
+PDFを書き出すときに、すべてのページへ書き込む文字の設定です（`src/core/marks.js`）。元のファイルは変えません。どの項目も `enabled` が `true` で、文字が空でないときだけ書き込みます。
+
+```js
+{
+  pageNumber: { enabled, position: 'bottom-center' など6か所, format: 'plain'|'total'|'dash'|'ja', start: 1, skipFirst: false },
+  header:     { enabled, text: '社内資料 {date}', align: 'left'|'center'|'right' },
+  footer:     { enabled, text, align },
+  watermark:  { enabled, text: '社外秘', color: 'gray'|'red'|'blue', opacity: 0.1〜0.3 },
+  stamp:      { enabled, text: '社外秘', color: 'red'|'blue'|'black', position: 'top-right' など4か所, firstPageOnly: true }
+}
+```
+
+- ヘッダー・フッターの文字の `{n}` はページ番号、`{total}` は全体のページ数、`{date}` は書き出した日（2026/10/21）
+- `skipFirst`：1ページ目（表紙）には番号を付けず、2ページ目を `start` の番号にする
+- 位置は「画面で見たときの向き」で決める。回転したページでも、見たときに下の中央・横書きになるよう、回転前の座標に戻して書き込む（`toPageSpace`）
+- 取り出す・分割のときも、できたファイルごとに書き込む（ページ番号はファイルごとに1から）
+
 ## 出力するときの処理の順番（画像のページ）
 
 1. 元画像を読み込み、写真の回転情報（EXIF）を反映する
@@ -86,6 +106,7 @@ RelaPDFの中心となるデータ構造です。実装は `src/core/page-list.j
 | `rotatePages(doc, pageIds, delta)` | 90度単位で回転する |
 | `setPerspective(doc, pageId, perspective \| null)` | 4点補正を設定する・外す |
 | `setFilter(doc, pageIds, filter)` | 色補正を設定する |
+| `setMarks(doc, marks \| null)` | 書き込みを設定する・外す |
 | `pruneSources(doc)` | 使われていない元データを取り除く |
 | `extractPages(doc, pageIds)` | 選んだページを新しいページリストとして取り出す |
 | `splitDocument(doc, splitBefore)` | 指定したページの手前で区切って複数に分ける |

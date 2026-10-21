@@ -125,6 +125,8 @@ test('PC：ページの絵をマウスでドラッグして並べ替える', asy
     fixture('photo-exif-rotate90.jpg'),
   ]);
   await expect(loadedThumbs(page)).toHaveCount(3);
+  // 道具のボタンが折り返して並ぶ狭い画面でも、ページが見える位置にする
+  await page.evaluate(() => document.querySelector('#page-grid').scrollIntoView());
   const from = await cards(page).nth(0).locator('.thumb').boundingBox();
   const to = await cards(page).nth(2).locator('.thumb').boundingBox();
   await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);

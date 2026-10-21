@@ -15,15 +15,19 @@ import {
   removePages,
   rotatePages,
   serializeDocument,
+  extractPages,
   setFilter,
+  setMarks,
   setPerspective,
 } from '../core/page-list.js';
+import { describeMarks } from '../core/marks.js';
 import { exportPdf, inspectPdf } from '../core/pdf-export.js';
 import { defaultFileName, sanitizeFileName, stripExtension } from '../core/filename.js';
 import { PAPER_MODES, QUALITY_PRESETS } from '../core/layout.js';
 import { createSourceStore, isQuotaError } from '../web/source-store.js';
 import { imageThumbnailUrl, loadImageFile, prepareImageForExport } from '../web/image.js';
-import { closePdf, pdfThumbnailUrl } from '../web/pdf-view.js';
+import { closePdf, pdfThumbnailUrl, renderPdfPage } from '../web/pdf-view.js';
+import { loadMarkFont } from '../web/fonts.js';
 import { downloadBlob } from '../web/save.js';
 import { currentMode, saveMode } from '../web/mode.js';
 import { loadDocumentMode } from '../web/document-mode.js';
@@ -35,6 +39,7 @@ import { enableMarqueeSelect } from './marquee.js';
 import { createPerspectiveEditor } from './perspective-editor.js';
 import { createStepHistory } from './navigation.js';
 import { createToolsDialog } from './tools-dialog.js';
+import { createMarksDialog } from './marks-dialog.js';
 import { createPreview } from './preview.js';
 import { renderPageImage } from '../web/page-image.js';
 import { APP_VERSION } from './version.js';
@@ -74,6 +79,7 @@ const els = {
   selectionCount: $('#selection-count'),
   selectAllButton: $('#select-all'),
   mergeHint: $('#merge-hint'),
+  marksStatus: $('#marks-status'),
   doneTitle: $('#done-title'),
   doneMeta: $('#done-meta'),
   busy: $('#busy'),
@@ -382,18 +388,27 @@ function baseFileName() {
  * @param {(text: string) => void} [progress] 進み具合の表示
  */
 async function buildPdf(target, title, progress = showBusy) {
-  const paper = els.paper.value;
-  const quality = els.quality.value;
   const imageTotal = target.pages.filter((p) => p.content.type === 'image').length;
   let imageDone = 0;
   progress('PDFを作成中…');
   return exportPdf(target, {
-    paper,
-    title,
-    getSourceBytes: (sourceId) => store.bytes(sourceId),
-    getImage: async (page) => {
+    ...exportOptions(() => {
       imageDone += 1;
       progress(`PDFを作成中… ${imageDone} / ${imageTotal}`);
+    }),
+    title,
+  });
+}
+
+/** 書き出しの設定（用紙・画質）と、中身の取り出し方 */
+function exportOptions(onImage = () => {}) {
+  const paper = els.paper.value;
+  const quality = els.quality.value;
+  return {
+    paper,
+    getSourceBytes: (sourceId) => store.bytes(sourceId),
+    getImage: async (page) => {
+      onImage();
       return prepareImageForExport(await store.get(page.content.sourceId), {
         quality,
         paper,
@@ -401,8 +416,33 @@ async function buildPdf(target, title, progress = showBusy) {
         filter: page.filter,
       });
     },
-  });
+    getFont: loadMarkFont,
+  };
 }
+
+// ---- 書き込み（ページ番号・ヘッダー/フッター・透かし・スタンプ） ----
+
+let markPreviewCount = 0;
+const marksDialog = createMarksDialog({
+  getDoc: () => doc,
+  onApply: (marks) => {
+    update(setMarks(doc, marks));
+    toast(marks ? `書き込みを設定しました（${describeMarks(marks).join('・')}）` : '書き込みを外しました');
+  },
+  // 見本：1ページだけPDFにして、画像にする（表紙を数えないときは2ページ目）
+  renderPreview: async (marks) => {
+    const index = marks.pageNumber.enabled && marks.pageNumber.skipFirst && doc.pages.length > 1 ? 1 : 0;
+    const one = { ...extractPages(doc, [doc.pages[index].id]), marks };
+    const bytes = await exportPdf(one, { ...exportOptions(), markNumbering: { offset: index, total: doc.pages.length } });
+    const id = `marks-preview-${++markPreviewCount}`;
+    try {
+      const blob = await renderPdfPage(id, async () => bytes, 0, { maxSide: 900 });
+      return { url: URL.createObjectURL(blob), pageNumber: index + 1 };
+    } finally {
+      closePdf(id);
+    }
+  },
+});
 
 async function createPdf() {
   if (doc.pages.length === 0) return;
@@ -559,6 +599,9 @@ function render() {
   for (const id of selected) if (!doc.pages.some((p) => p.id === id)) selected.delete(id);
   renderSelectionBar(count);
   els.mergeHint.hidden = !Object.values(doc.sources).some((source) => source.kind === 'pdf');
+  const marks = describeMarks(doc.marks);
+  els.marksStatus.hidden = marks.length === 0;
+  els.marksStatus.textContent = `書き込み：${marks.join('・')}（PDFを作成するときに、すべてのページに書き込みます）`;
 
   const cards = doc.pages.map((page, index) => renderCard(page, index, count));
   els.grid.replaceChildren(...cards);
@@ -915,6 +958,9 @@ function onAction(action) {
       break;
     case 'delete-selected':
       deletePages(selectedIds());
+      break;
+    case 'open-marks':
+      marksDialog.open();
       break;
     case 'document-selected':
       toggleDocumentMode(selectedIds());
