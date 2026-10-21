@@ -206,12 +206,29 @@ body.mode-detail .thumb { cursor: grab; }
   box-shadow: 0 12px 32px rgba(20, 30, 50, .28); transition: none;
 }
 .page-grid.is-dragging { user-select: none; -webkit-user-select: none; }
-.page-card.drop-before, .page-card.drop-after { position: relative; }
-.page-card.drop-before::before, .page-card.drop-after::after {
-  content: ""; position: absolute; top: 0; bottom: 0; width: 4px; border-radius: 2px; background: var(--accent);
+/* 落ちる場所の目印：太い線と「○番目へ」 */
+.drop-marker {
+  position: absolute; z-index: 25; width: 6px; margin-left: -3px; border-radius: 3px; pointer-events: none;
+  background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
 }
-.page-card.drop-before::before { left: -8px; }
-.page-card.drop-after::after { right: -8px; }
+.drop-marker::before, .drop-marker::after {
+  content: ""; position: absolute; left: 50%; width: 14px; height: 14px; margin-left: -7px; border-radius: 50%; background: var(--accent);
+}
+.drop-marker::before { top: -7px; }
+.drop-marker::after { bottom: -7px; }
+.drop-marker span {
+  position: absolute; top: -36px; left: 50%; transform: translateX(-50%); white-space: nowrap;
+  padding: 3px 10px; border-radius: 999px; background: var(--accent); color: var(--accent-text);
+  font-size: 13px; font-weight: 700; box-shadow: var(--shadow);
+}
+/* 長押しのときに、写真のメニューや文字の選択が出ないようにする */
+.page-card .thumb, .page-card .thumb img { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+/* 移動したページを少しの間光らせる */
+.page-card.just-moved { animation: just-moved 1.4s ease-out; }
+@keyframes just-moved {
+  0%, 30% { box-shadow: 0 0 0 4px var(--accent); }
+  100% { box-shadow: var(--shadow); }
+}
 
 /* ---- 確認画面の「保存へ進む」 ---- */
 .next-bar {

@@ -946,6 +946,10 @@ document.addEventListener('click', (event) => {
 enableDragReorder(els.grid, (pageId, insertBefore) => {
   const ids = mode === 'detail' && selected.has(pageId) && selected.size > 1 ? selectedIds() : [pageId];
   update(movePagesBefore(doc, ids, insertBefore));
+  // 動かしたことがはっきり分かるよう、移動したページを光らせて、何番目になったかを知らせる
+  const position = doc.pages.findIndex((p) => ids.includes(p.id)) + 1;
+  for (const id of ids) els.grid.querySelector(`[data-id="${CSS.escape(id)}"]`)?.classList.add('just-moved');
+  toast(ids.length > 1 ? `${ids.length}ページを${position}番目に移動しました` : `${position}番目に移動しました`);
 });
 
 // 詳細モード：ページのクリックで選ぶ、ダブルクリックで大きく見る

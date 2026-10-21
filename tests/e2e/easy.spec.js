@@ -130,8 +130,16 @@ test('PC：ページの絵をマウスでドラッグして並べ替える', asy
   await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
   await page.mouse.down();
   await page.mouse.move(to.x + to.width * 0.8, to.y + to.height / 2, { steps: 8 });
-  await expect(cards(page).nth(2)).toHaveClass(/drop-after/);
+  // 落ちる場所に線と「3番目へ」が出る（3枚目の右側）
+  const marker = page.locator('.drop-marker');
+  await expect(marker).toBeVisible();
+  await expect(marker).toHaveText('3番目へ');
+  const line = await marker.boundingBox();
+  expect(line.x).toBeGreaterThan(to.x + to.width - 10);
   await page.mouse.up();
+  await expect(marker).toBeHidden();
+  await expect(page.locator('#toast')).toContainText('3番目に移動しました');
+  await expect(cards(page).nth(2)).toHaveClass(/just-moved/);
   expect(await order(page)).toEqual(['photo-landscape.png', 'photo-exif-rotate90.jpg', 'photo-landscape.jpg']);
 });
 

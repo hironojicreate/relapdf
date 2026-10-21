@@ -208,3 +208,57 @@ test('PDFを読み込んだときだけ、しおりが引き継がれない注�
   await page.setInputFiles('#input-files', [fixture('sample-3pages.pdf')]);
   await expect(page.locator('#merge-hint')).toBeVisible();
 });
+
+test('タッチ操作：ページを長押ししてから、上下左右どこへでも動かせる（詳細モード）', async ({ page, context }, testInfo) => {
+  test.skip(testInfo.project.name === 'pc', 'タッチ操作の端末だけ');
+  await page.goto('./');
+  await page.click('[data-mode="detail"]');
+  await page.setInputFiles('#input-files', [fixture('sample-3pages.pdf'), fixture('sample-3pages.pdf')]);
+  await expect(page.locator('.page-card .thumb img[src^="blob:"]')).toHaveCount(6, { timeout: 15_000 });
+  const cdp = await context.newCDPSession(page);
+  const touch = (type, x, y) =>
+    cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y }] });
+
+  // 2行目の左（3枚目）を長押しして、1行目の左（1枚目の前）へ、上に動かす
+  await page.evaluate(() => scrollTo(0, 260));
+  const a = await cards(page).nth(2).locator('.thumb').boundingBox();
+  const b = await cards(page).nth(0).locator('.thumb').boundingBox();
+  const sx = a.x + a.width / 2;
+  const sy = a.y + 30;
+  const ex = b.x + b.width * 0.2;
+  const ey = b.y + b.height - 30;
+  const viewport = page.viewportSize();
+  expect(sy).toBeLessThan(viewport.height);
+  expect(ey).toBeGreaterThan(0);
+  await touch('touchStart', sx, sy);
+  await page.waitForTimeout(550); // 長押し
+  await expect(cards(page).nth(2)).toHaveClass(/dragging/);
+  for (let i = 1; i <= 10; i++) await touch('touchMove', sx + ((ex - sx) * i) / 10, sy + ((ey - sy) * i) / 10);
+  await expect(page.locator('.drop-marker')).toHaveText('1番目へ');
+  await touch('touchEnd');
+  expect(await names(page)).toEqual([
+    'sample-3pages.pdf:3',
+    'sample-3pages.pdf:1',
+    'sample-3pages.pdf:2',
+    'sample-3pages.pdf:1',
+    'sample-3pages.pdf:2',
+    'sample-3pages.pdf:3',
+  ]);
+  await expect(page.locator('#toast')).toContainText('1番目に移動しました');
+});
+
+test('タッチ操作：長押しせずに指を動かしたときは、スクロールになりドラッグしない', async ({ page, context }, testInfo) => {
+  test.skip(testInfo.project.name === 'pc', 'タッチ操作の端末だけ');
+  await openFiles(page);
+  const before = await names(page);
+  const cdp = await context.newCDPSession(page);
+  const a = await cards(page).nth(0).locator('.thumb').boundingBox();
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: a.x + 30, y: a.y + 60 }] });
+  for (let i = 1; i <= 5; i++) {
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: a.x + 30, y: a.y + 60 - i * 20 }] });
+  }
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await page.waitForTimeout(500);
+  await expect(page.locator('.drop-marker')).toBeHidden();
+  expect(await names(page)).toEqual(before);
+});
